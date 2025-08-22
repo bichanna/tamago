@@ -2,8 +2,6 @@
 
 Tamago is a code generator library for C, written in Rust. It is designed to simplify the process of generating C code programmatically, leveraging Rust's safety and expressiveness. This crate makes heavy use of the builder pattern to provide a pretty API (I hope) for constructing C code structures.
 
-Tamago is primarily developed as a core component for the [Castella transpiler](https://github.com/bichanna/castella), but it is designed to be reusable for any project that needs to generate C code dynamically.
-
 ## Features
 
 - Generate C code programmatically with a type-safe Rust API.
