@@ -324,4 +324,22 @@ bool some_func(void) {
 
         assert_eq!(s.to_string(), res);
     }
+
+    #[test]
+    fn global_variable_terminated() {
+        let s = ScopeBuilder::new()
+            .global_statements(vec![
+                GlobalStatement::Variable(
+                    VariableBuilder::new_with_str("counter", Type::new(BaseType::Int).build())
+                        .value(Expr::Int(0))
+                        .build(),
+                ),
+                GlobalStatement::Variable(
+                    VariableBuilder::new_with_str("flag", Type::new(BaseType::Bool).build())
+                        .build(),
+                ),
+            ])
+            .build();
+        assert_eq!(s.to_string(), "int counter = 0;\nbool flag;\n");
+    }
 }

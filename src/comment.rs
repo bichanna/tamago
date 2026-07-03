@@ -569,4 +569,23 @@ mod tests {
         c = DocComment::new().line_str("ABC").build();
         assert_eq!(c.to_string(), "/// ABC\n");
     }
+
+    #[test]
+    fn text_str_single_char() {
+        let c = DocComment::new().text_str("x").build();
+        assert_eq!(c.to_string(), "/// x\n");
+    }
+
+    #[test]
+    fn text_str_non_ascii() {
+        let c = DocComment::new().text_str("café 島津").build();
+        assert_eq!(c.to_string(), "/// café 島津\n");
+    }
+
+    #[test]
+    fn text_str_wraps_without_corruption() {
+        let long = format!("{} {}", "A".repeat(82), "B".repeat(5));
+        let docs = DocCommentBuilder::new().text_str(&long).build().docs;
+        assert_eq!(docs, vec!["A".repeat(82), "B".repeat(5)]);
+    }
 }

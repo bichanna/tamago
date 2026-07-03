@@ -639,4 +639,43 @@ mod tests {
 "#;
         assert_eq!(f.to_string(), res);
     }
+
+    #[test]
+    fn prototype() {
+        let proto = FunctionBuilder::new_with_str("foo", Type::new(BaseType::Void).build()).build();
+        assert_eq!(proto.to_string(), "void foo(void);\n");
+    }
+
+    #[test]
+    fn empty_definition() {
+        let empty = FunctionBuilder::new_with_str("arse", Type::new(BaseType::Void).build())
+            .body(Block::new().build())
+            .build();
+        assert_eq!(empty.to_string(), "void arse(void) {\n}\n");
+    }
+
+    #[test]
+    fn extern_prototype() {
+        let ext = FunctionBuilder::new_with_str("lol", Type::new(BaseType::Int).build())
+            .make_extern()
+            .build();
+        assert_eq!(ext.to_string(), "extern int lol(void);\n");
+    }
+
+    #[test]
+    fn static_inline_definition() {
+        let f = FunctionBuilder::new_with_str("x", Type::new(BaseType::Int).build())
+            .make_static()
+            .make_inline()
+            .body(
+                Block::new()
+                    .statement(Statement::Return(Some(Expr::Int(0))))
+                    .build(),
+            )
+            .build();
+        assert_eq!(
+            f.to_string(),
+            "static inline int x(void) {\n  return 0;\n}\n"
+        );
+    }
 }

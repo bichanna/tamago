@@ -1933,4 +1933,17 @@ identifier;
         let res = "#warning \"some warning message\"\n";
         assert_eq!(l.to_string(), res);
     }
+
+    #[test]
+    fn error_directive_escaping() {
+        let e = ErrorDirectiveBuilder::new_with_str("unsupported \"mode\"").build();
+        assert_eq!(e.to_string(), "#error \"unsupported \\\"mode\\\"\"\n");
+    }
+
+    #[test]
+    fn ifndef_has_hash() {
+        let i = IfDefDirectiveBuilder::new_with_str("GUARD_H").not().build();
+        assert!(i.to_string().starts_with("#ifndef GUARD_H\n"));
+        assert!(i.to_string().ends_with("#endif\n"));
+    }
 }

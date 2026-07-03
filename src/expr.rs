@@ -1014,4 +1014,41 @@ mod tests {
         let res2 = "{.name=\"bichanna\", .age=18}";
         assert_eq!(i2.to_string(), res2);
     }
+
+    #[test]
+    fn uint_suffix() {
+        assert_eq!(Expr::UInt(42).to_string(), "42u");
+        assert_eq!(
+            Expr::UInt(18446744073709551615).to_string(),
+            "18446744073709551615u"
+        );
+    }
+
+    #[test]
+    fn string_escaping() {
+        assert_eq!(
+            Expr::Str("a\"b\\c\nd".to_string()).to_string(),
+            r#""a\"b\\c\nd""#
+        );
+        assert_eq!(Expr::Str("x\0y".to_string()).to_string(), r#""x\000y""#);
+    }
+
+    #[test]
+    fn char_escaping() {
+        assert_eq!(Expr::Char('\n').to_string(), r"'\n'");
+        assert_eq!(Expr::Char('\'').to_string(), r"'\''");
+        assert_eq!(Expr::Char('\\').to_string(), r"'\\'");
+        assert_eq!(Expr::Char('a').to_string(), "'a'");
+    }
+
+    #[test]
+    fn float_literals() {
+        assert_eq!(Expr::Float(1.0).to_string(), "1.0f");
+        assert_eq!(Expr::Double(2.0).to_string(), "2.0");
+        assert_eq!(Expr::Float(0.5).to_string(), "0.5f");
+        assert_eq!(Expr::Double(3.5).to_string(), "3.5");
+        assert_eq!(Expr::Double(f64::INFINITY).to_string(), "INFINITY");
+        assert_eq!(Expr::Double(f64::NEG_INFINITY).to_string(), "-INFINITY");
+        assert_eq!(Expr::Float(f32::NAN).to_string(), "NAN");
+    }
 }

@@ -234,4 +234,14 @@ mod tests {
 
         assert_eq!(t.to_string(), res);
     }
+
+    #[test]
+    fn typedef_array() {
+        let t = TypeDefBuilder::new_with_str(
+            TypeBuilder::new(BaseType::Int).make_array(10).build(),
+            "arr10",
+        )
+        .build();
+        assert_eq!(t.to_string(), "typedef int arr10[10];\n");
+    }
 }
