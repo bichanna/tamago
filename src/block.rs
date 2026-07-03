@@ -479,7 +479,7 @@ mod tests {
             .make_pointer()
             .build();
         s = Statement::Variable(VariableBuilder::new_with_str("abc", t).build());
-        assert_eq!(s.to_string(), "const size_t* abc;\n");
+        assert_eq!(s.to_string(), "const size_t *abc;\n");
 
         s = Statement::Return(None);
         assert_eq!(s.to_string(), "return;\n");

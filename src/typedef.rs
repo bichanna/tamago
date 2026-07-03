@@ -26,7 +26,7 @@
 
 use std::fmt::{self, Write};
 
-use crate::{BaseType, Format, Formatter, Type};
+use crate::{declare, BaseType, Format, Formatter, Type};
 use tamacro::DisplayFromFormat;
 
 /// Represents a C-style `typedef` declaration.
@@ -110,12 +110,7 @@ impl TypeDef {
 
 impl Format for TypeDef {
     fn format(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
-        write!(fmt, "typedef ")?;
-        self.t.format(fmt)?;
-        write!(fmt, " {}", self.name)?;
-        if self.t.is_array() {
-            write!(fmt, "[{}]", self.t.array)?;
-        }
+        write!(fmt, "typedef {}", declare(&self.t, &self.name))?;
         writeln!(fmt, ";")
     }
 }

@@ -28,7 +28,7 @@
 
 use std::fmt::{self, Write};
 
-use crate::{BaseType, DocComment, Format, Formatter, Type};
+use crate::{declare, BaseType, DocComment, Format, Formatter, Type};
 use tamacro::DisplayFromFormat;
 
 /// Represents a struct in C.
@@ -41,7 +41,7 @@ use tamacro::DisplayFromFormat;
 /// A C struct representation:
 /// ```c
 /// struct Person {
-///   char* name;
+///   char *name;
 ///   int age;
 /// };
 /// ```
@@ -87,7 +87,7 @@ impl Struct {
     /// println!("{}", person_struct);
     /// // Outputs:
     /// // struct Person {
-    /// //   char* name;
+    /// //   char *name;
     /// //   int age;
     /// // };
     /// ```
@@ -336,16 +336,12 @@ impl Format for Field {
             doc.format(fmt)?;
         }
 
-        self.t.format(fmt)?;
-        write!(fmt, " {}", self.name)?;
+        write!(fmt, "{}", declare(&self.t, &self.name))?;
 
         if let Some(w) = self.width {
             write!(fmt, " : {w}")?;
         }
 
-        if self.t.is_array() {
-            write!(fmt, "[{}]", self.t.array)?;
-        }
         writeln!(fmt, ";")
     }
 }
@@ -466,7 +462,7 @@ impl FieldBuilder {
     /// println!("{}", field);
     /// // Output:
     /// // /// The person's full name
-    /// // char* name;
+    /// // char *name;
     /// ```
     pub fn build(self) -> Field {
         Field {
@@ -515,7 +511,7 @@ char some_field;
             ])
             .build();
         let res = r#"struct Person {
-  char* name;
+  char *name;
   uint8_t age;
 };
 "#;

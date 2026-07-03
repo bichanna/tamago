@@ -26,7 +26,7 @@
 
 use std::fmt::{self, Write};
 
-use crate::{Block, DocComment, Format, Formatter, Statement, Type};
+use crate::{declare, Block, DocComment, Format, Formatter, Statement, Type};
 use tamacro::DisplayFromFormat;
 
 /// Represents a C function with all its components and attributes.
@@ -138,24 +138,20 @@ impl Format for Function {
             write!(fmt, "inline ")?;
         }
 
-        self.ret.format(fmt)?;
-        write!(fmt, " ")?;
-
-        write!(fmt, "{}(", self.name)?;
-        if self.params.is_empty() {
-            write!(fmt, "void")?;
-        } else if !self.params.is_empty() {
-            for param in &self.params[..self.params.len() - 1] {
-                param.format(fmt)?;
-                write!(fmt, ", ")?;
-            }
-
-            if let Some(last) = self.params.last() {
-                last.format(fmt)?;
-            }
-        }
-
-        write!(fmt, ")")?;
+        let params = if self.params.is_empty() {
+            "void".to_string()
+        } else {
+            self.params
+                .iter()
+                .map(|p| p.declarator())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        write!(
+            fmt,
+            "{}",
+            declare(&self.ret, &format!("{}({})", self.name, params))
+        )?;
 
         match &self.body {
             Some(body) => {
@@ -597,17 +593,17 @@ impl ParameterBuilder {
     }
 }
 
+impl Parameter {
+    /// Renders this parameter as a C declarator (its type with the parameter
+    /// name threaded through), e.g. `int x`, `char *s`, or `void (*cb)(int)`
+    pub fn declarator(&self) -> String {
+        declare(&self.t, &self.name)
+    }
+}
+
 impl Format for Parameter {
     fn format(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
-        self.t.format(fmt)?;
-
-        write!(fmt, " {}", self.name)?;
-
-        if self.t.is_array() {
-            write!(fmt, "[{}]", self.t.array)?;
-        }
-
-        Ok(())
+        write!(fmt, "{}", self.declarator())
     }
 }
 

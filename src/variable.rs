@@ -27,7 +27,7 @@
 
 use std::fmt::{self, Write};
 
-use crate::{DocComment, Expr, Format, Formatter, Type};
+use crate::{declare, DocComment, Expr, Format, Formatter, Type};
 use tamacro::DisplayFromFormat;
 
 /// Represents a C variable with its properties and attributes.
@@ -131,12 +131,7 @@ impl Format for Variable {
             write!(fmt, "static ")?;
         }
 
-        self.t.format(fmt)?;
-        write!(fmt, " {}", self.name)?;
-
-        if self.t.is_array() {
-            write!(fmt, "[{}]", self.t.array)?;
-        }
+        write!(fmt, "{}", declare(&self.t, &self.name))?;
 
         if !self.is_extern {
             if let Some(value) = &self.value {
@@ -361,7 +356,7 @@ mod tests {
         .value(Expr::Str("Hello, world".to_string()))
         .build();
 
-        let res = "const char* some_var = \"Hello, world\"";
+        let res = "const char *some_var = \"Hello, world\"";
 
         assert_eq!(var.to_string(), res);
 

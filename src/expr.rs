@@ -651,9 +651,6 @@ impl Format for Expr {
             SizeOf(t) => {
                 write!(fmt, "sizeof(")?;
                 t.format(fmt)?;
-                if t.is_array() {
-                    write!(fmt, "[{}]", t.array)?;
-                }
                 write!(fmt, ")")
             }
             InitArr(v) => {
@@ -972,7 +969,7 @@ mod tests {
             Type::new(BaseType::Void).make_pointer().build(),
             Expr::Ident("something".to_string()),
         );
-        let res = "(void*)(something)";
+        let res = "(void *)(something)";
         assert_eq!(c.to_string(), res);
     }
 

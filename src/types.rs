@@ -21,12 +21,28 @@
 //! This module provides tools for expressing and managing C types in Rust.
 //!
 //! It defines structures and utilities to represent C base types, type qualifiers,
-//! and complex type constructions such as pointers and arrays. This is particularly
-//! useful for generating C code or bindings programmatically from Rust.
+//! and complex type constructions such as pointers, arrays, and function types.
+//! This is particularly useful for generating C code or bindings programmatically
+//! from Rust.
+//!
+//! # Type representation
+//!
+//! C declarations read "inside-out": in `int (*p)[10]`, `p` is a pointer to an
+//! array of ten `int`s, not an array of pointers. To model this faithfully,
+//! [`Type`] is a *recursive* description of a derived type, and rendering a
+//! declaration threads the identifier through it with the classic declarator
+//! algorithm (see [`declare`]). This is what makes pointer-to-array,
+//! array-of-pointers, function pointers, and pointer-level `const` all
+//! expressible.
+//!
+//! The [`TypeBuilder`] fluent API (`Type::new(base).make_pointer().make_array(n)`)
+//! is retained as a thin facade over the recursive form for the common cases;
+//! reach for the [`Type::ptr`], [`Type::array`], and [`Type::func`] constructors
+//! (or the enum variants directly) when you need the full generality.
 
 use std::fmt::{self, Write};
 
-use crate::{Format, Formatter};
+use crate::{Expr, Format, Formatter};
 use tamacro::DisplayFromFormat;
 
 /// Represents all base types used in C.
@@ -302,46 +318,171 @@ impl Format for TypeQualifier {
     }
 }
 
-/// Represents a complete type in C, including base type, qualifiers, pointers, and arrays.
+/// A recursive description of a C type, built out of a base type wrapped in any
+/// number of pointer, array, and function derivations.
 ///
-/// The `Type` struct combines a `BaseType` with optional qualifiers, pointer levels,
-/// and array sizes to fully describe a C type as it would appear in a declaration.
+/// Because C declarations bind inside-out, a `Type` cannot be printed
+/// independently of the identifier it declares — the name has to be threaded
+/// through the derivations. Use [`declare`] (or [`Type::declarator`]) to render a
+/// full declaration, and the [`Format`]/`Display` impls to render the *abstract*
+/// declarator (the type with an empty name, as used in casts and `sizeof`).
 ///
 /// # Examples
 ///
-/// Pointer to const char:
-/// ```c
-/// const char*
+/// Pointer to const char (`const char *`):
+/// ```rust
+/// let t = Type::const_ptr(Type::base(BaseType::Char));
+/// assert_eq!(t.to_string(), "const char *");
 /// ```
 ///
-/// Array of integers:
-/// ```c
-/// int[10]
+/// Pointer to an array of ten ints (`int (*)[10]`):
+/// ```rust
+/// let t = Type::ptr(Type::array(
+///     Type::base(BaseType::Int),
+///     Some(Expr::Int(10)),
+/// ));
+/// assert_eq!(t.declarator("p"), "int (*p)[10]");
 /// ```
 ///
-/// Double pointer to volatile float:
-/// ```c
-/// volatile float**
+/// A function pointer (`void (*)(int)`):
+/// ```rust
+/// let t = Type::ptr(Type::func(
+///     Type::base(BaseType::Void),
+///     vec![Type::base(BaseType::Int)],
+///     false,
+/// ));
+/// assert_eq!(t.declarator("cb"), "void (*cb)(int)");
 /// ```
 #[derive(Debug, Clone, DisplayFromFormat)]
-pub struct Type {
-    /// The base type used to construct a type.
-    pub base: BaseType,
+pub enum Type {
+    /// A base type with its (base-level) qualifiers, e.g. `const int`.
+    Base {
+        /// The underlying base type.
+        base: BaseType,
+        /// Qualifiers applied to the base type (the pointee, when under a pointer).
+        quals: Vec<TypeQualifier>,
+    },
 
-    /// All the qualifiers for the type.
-    pub qualifiers: Vec<TypeQualifier>,
+    /// A pointer to another type, with its own (pointer-level) qualifiers.
+    ///
+    /// The qualifiers here apply to the pointer itself, so `Pointer { quals:
+    /// [Const], to: char }` is `char * const` (a const pointer), as opposed to
+    /// `const char *` (a pointer to const char), which is a `Base` with a
+    /// `const` qualifier under a `Pointer`.
+    Pointer {
+        /// Qualifiers applied to the pointer itself (e.g. `const` in `T * const`).
+        quals: Vec<TypeQualifier>,
+        /// The pointee type.
+        to: Box<Type>,
+    },
 
-    /// Pointers
-    pub pointers: u8,
+    /// An array of another type. `size` is `None` for an incomplete/flexible
+    /// array (`[]`) and `Some(expr)` for a sized one (`[N]`, where `N` may be a
+    /// constant expression such as a named constant).
+    Array {
+        /// The array length, or `None` for `[]`.
+        size: Option<Box<Expr>>,
+        /// The element type.
+        of: Box<Type>,
+    },
 
-    /// Array
-    pub array: usize,
+    /// A function type, used chiefly under a pointer to form function pointers
+    /// (`void (*)(int)`) or in typedefs.
+    Function {
+        /// The return type.
+        ret: Box<Type>,
+        /// The parameter types (abstract, i.e. unnamed).
+        params: Vec<Type>,
+        /// Whether the function is variadic (a trailing `...`).
+        variadic: bool,
+    },
+}
+
+/// Renders a full C declaration for `ty` naming the declarator `inner`.
+///
+/// `inner` is the declarator built up so far; pass the identifier being declared
+/// (e.g. `"p"`), or the empty string for an *abstract* declarator (as in a cast
+/// or `sizeof`). The routine walks the type outward, parenthesizing the
+/// declarator whenever a pointer's pointee is an array or function (because `[]`
+/// and `()` bind tighter than `*`).
+///
+/// # Examples
+///
+/// ```rust
+/// // int *a[10]  — array of ten pointers to int
+/// let t = Type::array(Type::ptr(Type::base(BaseType::Int)), Some(Expr::Int(10)));
+/// assert_eq!(declare(&t, "a"), "int *a[10]");
+///
+/// // int (*p)[10]  — pointer to an array of ten ints
+/// let t = Type::ptr(Type::array(Type::base(BaseType::Int), Some(Expr::Int(10))));
+/// assert_eq!(declare(&t, "p"), "int (*p)[10]");
+/// ```
+pub fn declare(ty: &Type, inner: &str) -> String {
+    match ty {
+        Type::Base { base, quals } => {
+            let q = quals_prefix(quals);
+            if inner.is_empty() {
+                format!("{q}{base}")
+            } else if inner.starts_with('[') {
+                // Arrays attach directly to the base: `int[10]`.
+                format!("{q}{base}{inner}")
+            } else {
+                format!("{q}{base} {inner}")
+            }
+        }
+        Type::Pointer { quals, to } => {
+            let pq = quals_prefix(quals);
+            let star = format!("*{pq}{inner}");
+            // A pointer to an array or function needs its declarator parenthesized.
+            let next = match to.as_ref() {
+                Type::Array { .. } | Type::Function { .. } => format!("({star})"),
+                _ => star,
+            };
+            declare(to, &next)
+        }
+        Type::Array { size, of } => {
+            let sz = size.as_ref().map(|e| e.to_string()).unwrap_or_default();
+            declare(of, &format!("{inner}[{sz}]"))
+        }
+        Type::Function {
+            ret,
+            params,
+            variadic,
+        } => {
+            let mut parts: Vec<String> = params.iter().map(|p| declare(p, "")).collect();
+            if *variadic {
+                parts.push("...".to_string());
+            }
+            let params_str = if parts.is_empty() {
+                "void".to_string()
+            } else {
+                parts.join(", ")
+            };
+            declare(ret, &format!("{inner}({params_str})"))
+        }
+    }
+}
+
+/// Builds the `const `/`volatile ` prefix (each qualifier followed by a space),
+/// in the order the qualifiers are stored.
+fn quals_prefix(quals: &[TypeQualifier]) -> String {
+    let mut out = String::new();
+    for q in quals {
+        out.push_str(&q.to_string());
+        out.push(' ');
+    }
+    out
 }
 
 impl Type {
-    /// Creates and returns a new `TypeBuilder` to construct a `Type` using the builder pattern.
+    /// Creates and returns a new [`TypeBuilder`] to construct a `Type` using the
+    /// builder pattern.
     ///
-    /// This method provides a fluent interface for defining complex C types incrementally.
+    /// This is the backwards-compatible facade over the recursive representation
+    /// and covers the common cases (qualifiers, a run of pointers, and a single
+    /// array dimension). For anything richer — function pointers, multidimensional
+    /// or unsized arrays, pointer-level `const` — use [`Type::ptr`],
+    /// [`Type::array`], [`Type::func`], or the enum variants directly.
     ///
     /// # Parameters
     ///
@@ -358,17 +499,78 @@ impl Type {
     ///     .make_const()
     ///     .make_pointer()
     ///     .build();
-    /// assert_eq!(t.to_string(), "const char*");
+    /// assert_eq!(t.to_string(), "const char *");
     /// ```
     pub fn new(base: BaseType) -> TypeBuilder {
         TypeBuilder::new(base)
     }
 
-    /// Checks whether the type is an array.
+    /// Creates an unqualified base type, e.g. `int`.
+    pub fn base(base: BaseType) -> Type {
+        Type::Base {
+            base,
+            quals: vec![],
+        }
+    }
+
+    /// Creates a base type carrying the given qualifiers, e.g. `const int`.
+    pub fn base_qualified(base: BaseType, quals: Vec<TypeQualifier>) -> Type {
+        Type::Base { base, quals }
+    }
+
+    /// Creates a (non-const) pointer to `to`.
+    pub fn ptr(to: Type) -> Type {
+        Type::Pointer {
+            quals: vec![],
+            to: Box::new(to),
+        }
+    }
+
+    /// Creates a `const` pointer to `to` (i.e. `T * const`).
+    pub fn const_ptr(to: Type) -> Type {
+        Type::Pointer {
+            quals: vec![TypeQualifier::Const],
+            to: Box::new(to),
+        }
+    }
+
+    /// Creates an array of `of`. Pass `None` for an incomplete array (`[]`) or
+    /// `Some(expr)` for a sized one (`[expr]`).
+    pub fn array(of: Type, size: Option<Expr>) -> Type {
+        Type::Array {
+            size: size.map(Box::new),
+            of: Box::new(of),
+        }
+    }
+
+    /// Creates a function type returning `ret` and taking `params` (with an
+    /// optional trailing `...` when `variadic`). Wrap it in [`Type::ptr`] to get
+    /// a function pointer.
+    pub fn func(ret: Type, params: Vec<Type>, variadic: bool) -> Type {
+        Type::Function {
+            ret: Box::new(ret),
+            params,
+            variadic,
+        }
+    }
+
+    /// Renders the full declaration of this type for the identifier `name`.
     ///
-    /// # Returns
+    /// This is the method form of [`declare`]; it is what every declaration site
+    /// (variables, fields, parameters, typedefs) uses to place the name correctly
+    /// within the type.
     ///
-    /// `true` if the type is an array (array size > 0), `false` otherwise
+    /// # Examples
+    ///
+    /// ```rust
+    /// let t = Type::ptr(Type::base(BaseType::Int));
+    /// assert_eq!(t.declarator("x"), "int *x");
+    /// ```
+    pub fn declarator(&self, name: &str) -> String {
+        declare(self, name)
+    }
+
+    /// Checks whether the outermost derivation of this type is an array.
     ///
     /// # Examples
     ///
@@ -379,29 +581,25 @@ impl Type {
     /// assert!(!simple_type.is_array());
     /// ```
     pub fn is_array(&self) -> bool {
-        self.array != 0
+        matches!(self, Type::Array { .. })
     }
 }
 
 impl Format for Type {
     fn format(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
-        for q in &self.qualifiers {
-            q.format(fmt)?;
-            write!(fmt, " ")?;
-        }
-
-        self.base.format(fmt)?;
-
-        write!(fmt, "{}", "*".repeat(self.pointers.into()))?;
-
-        Ok(())
+        // Formatting a bare `Type` yields its abstract declarator (empty name),
+        // which is what casts and `sizeof` want.
+        write!(fmt, "{}", declare(self, ""))
     }
 }
 
 /// A builder for constructing a `Type` instance with a fluent interface.
 ///
 /// The `TypeBuilder` allows incremental configuration of a C type's properties,
-/// such as qualifiers, pointers, and array sizes, before finalizing the type.
+/// such as qualifiers, pointers, and a single array dimension, before finalizing
+/// the type. It is a facade over the recursive [`Type`] representation: `build`
+/// assembles the qualified base, wraps it in the requested number of pointers,
+/// and finally (if an array size was set) wraps that in an array.
 pub struct TypeBuilder {
     base: BaseType,
     qualifiers: Vec<TypeQualifier>,
@@ -434,7 +632,7 @@ impl TypeBuilder {
         }
     }
 
-    /// Adds a type qualifier to the type being built.
+    /// Adds a type qualifier to the (base of the) type being built.
     ///
     /// # Parameters
     ///
@@ -457,7 +655,7 @@ impl TypeBuilder {
 
     /// Makes the type volatile.
     ///
-    /// Adds the `volatile` qualifier to the type.
+    /// Adds the `volatile` qualifier to the base type.
     ///
     /// # Returns
     ///
@@ -475,7 +673,10 @@ impl TypeBuilder {
 
     /// Makes the type const.
     ///
-    /// Adds the `const` qualifier to the type.
+    /// Adds the `const` qualifier to the base type. Note that, as in the original
+    /// flat model, this always qualifies the base (the pointee when pointers are
+    /// present); to make a *pointer* itself const, construct a
+    /// [`Type::const_ptr`] directly.
     ///
     /// # Returns
     ///
@@ -503,7 +704,7 @@ impl TypeBuilder {
     ///
     /// ```rust
     /// let builder = TypeBuilder::new(BaseType::Void).make_pointer();
-    /// assert_eq!(builder.build().to_string(), "void*");
+    /// assert_eq!(builder.build().to_string(), "void *");
     /// ```
     pub fn make_pointer(mut self) -> Self {
         self.pointers += 1;
@@ -511,6 +712,9 @@ impl TypeBuilder {
     }
 
     /// Makes the type an array with the given size.
+    ///
+    /// A size of `0` is treated as "not an array" (preserving the original
+    /// behavior); use the [`Type::array`] constructor for incomplete arrays.
     ///
     /// # Parameters
     ///
@@ -543,15 +747,29 @@ impl TypeBuilder {
     ///     .make_const()
     ///     .make_pointer()
     ///     .build();
-    /// assert_eq!(t.to_string(), "const double*");
+    /// assert_eq!(t.to_string(), "const double *");
     /// ```
     pub fn build(self) -> Type {
-        Type {
+        let mut ty = Type::Base {
             base: self.base,
-            qualifiers: self.qualifiers,
-            pointers: self.pointers,
-            array: self.array,
+            quals: self.qualifiers,
+        };
+
+        for _ in 0..self.pointers {
+            ty = Type::Pointer {
+                quals: vec![],
+                to: Box::new(ty),
+            };
         }
+
+        if self.array != 0 {
+            ty = Type::Array {
+                size: Some(Box::new(Expr::Int(self.array as i64))),
+                of: Box::new(ty),
+            };
+        }
+
+        ty
     }
 }
 
@@ -591,21 +809,54 @@ mod tests {
         assert_eq!(t.to_string(), "void");
 
         t = Type::new(Void).make_pointer().make_pointer().build();
-        assert_eq!(t.to_string(), "void**");
+        assert_eq!(t.to_string(), "void **");
 
         t = Type::new(Void)
             .make_pointer()
             .make_pointer()
             .make_const()
             .build();
-        assert_eq!(t.to_string(), "const void**");
+        assert_eq!(t.to_string(), "const void **");
 
         t = Type::new(Void)
             .make_pointer()
             .make_const()
             .make_array(10)
             .build();
-        assert_eq!(t.to_string(), "const void*");
+        assert_eq!(t.to_string(), "const void *[10]");
         assert!(t.is_array())
+    }
+
+    #[test]
+    fn declarator_named() {
+        use BaseType::*;
+
+        // simple pointer
+        let t = Type::ptr(Type::base(Int));
+        assert_eq!(t.declarator("x"), "int *x");
+
+        // array of pointers
+        let t = Type::array(Type::ptr(Type::base(Int)), Some(Expr::Int(10)));
+        assert_eq!(t.declarator("a"), "int *a[10]");
+
+        // pointer to array
+        let t = Type::ptr(Type::array(Type::base(Int), Some(Expr::Int(10))));
+        assert_eq!(t.declarator("p"), "int (*p)[10]");
+
+        // function pointer
+        let t = Type::ptr(Type::func(
+            Type::base(Void),
+            vec![Type::base(Int), Type::base(Char)],
+            false,
+        ));
+        assert_eq!(t.declarator("cb"), "void (*cb)(int, char)");
+
+        // const pointer to const char
+        let t = Type::const_ptr(Type::base_qualified(Char, vec![TypeQualifier::Const]));
+        assert_eq!(t.declarator("p"), "const char *const p");
+
+        // incomplete (flexible) array
+        let t = Type::array(Type::base(Int), None);
+        assert_eq!(t.declarator("data"), "int data[]");
     }
 }
