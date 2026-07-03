@@ -45,6 +45,86 @@ use std::fmt::{self, Write};
 use crate::{Format, Formatter, Type, Variable};
 use tamacro::{DisplayFromConstSymbol, DisplayFromFormat, FormatFromConstSymbol};
 
+/// Escapes a Rust string into the body of a C string literal (no surrounding quotes).
+fn escape_c_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for &b in s.as_bytes() {
+        match b {
+            b'"' => out.push_str("\\\""),
+            b'\\' => out.push_str("\\\\"),
+            b'\n' => out.push_str("\\n"),
+            b'\t' => out.push_str("\\t"),
+            b'\r' => out.push_str("\\r"),
+            0x07 => out.push_str("\\a"),
+            0x08 => out.push_str("\\b"),
+            0x0b => out.push_str("\\v"),
+            0x0c => out.push_str("\\f"),
+            0x20..=0x7e => out.push(b as char),
+            _ => out.push_str(&format!("\\{b:03o}")),
+        }
+    }
+    out
+}
+
+/// Escapes a Rust `char` into the body of a C character constant (no surrounding quotes).
+fn escape_c_char(c: char) -> String {
+    match c {
+        '\'' => "\\'".to_string(),
+        '\\' => "\\\\".to_string(),
+        '\n' => "\\n".to_string(),
+        '\t' => "\\t".to_string(),
+        '\r' => "\\r".to_string(),
+        '\0' => "\\0".to_string(),
+        '\u{07}' => "\\a".to_string(),
+        '\u{08}' => "\\b".to_string(),
+        '\u{0b}' => "\\v".to_string(),
+        '\u{0c}' => "\\f".to_string(),
+        c if (' '..='~').contains(&c) => c.to_string(),
+        c if (c as u32) <= 0xff => format!("\\{:03o}", c as u32),
+        c => format!("\\x{:x}", c as u32),
+    }
+}
+
+/// Formats an `f64` as a valid C `double` constant
+fn format_c_double(num: f64) -> String {
+    if num.is_nan() {
+        "NAN".to_string()
+    } else if num.is_infinite() {
+        if num < 0.0 {
+            "-INFINITY".to_string()
+        } else {
+            "INFINITY".to_string()
+        }
+    } else {
+        let s = format!("{num}");
+        if s.contains('.') || s.contains('e') || s.contains('E') {
+            s
+        } else {
+            format!("{s}.0")
+        }
+    }
+}
+
+/// Formats an `f32` as a valid C `float` constant.
+fn format_c_float(num: f32) -> String {
+    if num.is_nan() {
+        "NAN".to_string()
+    } else if num.is_infinite() {
+        if num < 0.0 {
+            "-INFINITY".to_string()
+        } else {
+            "INFINITY".to_string()
+        }
+    } else {
+        let s = format!("{num}");
+        if s.contains('.') || s.contains('e') || s.contains('E') {
+            format!("{s}f")
+        } else {
+            format!("{s}.0f")
+        }
+    }
+}
+
 /// Encapsulates all types of expressions in C.
 ///
 /// This enum represents the complete set of expression types in C, providing a
@@ -492,12 +572,12 @@ impl Format for Expr {
         use Expr::*;
         match self {
             Int(num) => write!(fmt, "{num}"),
-            UInt(num) => write!(fmt, "{num}"),
-            Double(num) => write!(fmt, "{num}"),
-            Float(num) => write!(fmt, "{num}f"),
+            UInt(num) => write!(fmt, "{num}u"),
+            Double(num) => write!(fmt, "{}", format_c_double(*num)),
+            Float(num) => write!(fmt, "{}", format_c_float(*num)),
             Bool(b) => write!(fmt, "{}", if *b { "true" } else { "false" }),
-            Char(c) => write!(fmt, "'{c}'"),
-            Str(s) => write!(fmt, "\"{s}\""),
+            Char(c) => write!(fmt, "'{}'", escape_c_char(*c)),
+            Str(s) => write!(fmt, "\"{}\"", escape_c_str(s)),
             Ident(name) => write!(fmt, "{name}"),
             Variable(var) => var.format(fmt),
             Binary { left, op, right } => {

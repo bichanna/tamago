@@ -1413,7 +1413,7 @@ impl IfDefDirective {
 impl Format for IfDefDirective {
     fn format(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
         if self.not {
-            writeln!(fmt, "ifndef {}", self.symbol)?;
+            writeln!(fmt, "#ifndef {}", self.symbol)?;
         } else {
             writeln!(fmt, "#ifdef {}", self.symbol)?;
         }
@@ -1912,7 +1912,7 @@ identifier;
             .global_statement(GlobalStatement::NewLine)
             .not()
             .build();
-        let res = r#"ifndef SOMETHING
+        let res = r#"#ifndef SOMETHING
 
 #endif
 "#;

@@ -75,8 +75,9 @@ pub struct Function {
     /// Whether the function is declared with the 'extern' keyword
     pub is_extern: bool,
 
-    /// The body of the function represented as a Block of statements
-    pub body: Block,
+    /// The body of the function. `None` means this is a prototype (a declaration
+    /// only); `Some(block)` is a definition, even when the block is empty.
+    pub body: Option<Block>,
 
     /// The optional documentation comment for the function
     pub doc: Option<DocComment>,
@@ -125,7 +126,7 @@ impl Format for Function {
             doc.format(fmt)?;
         }
 
-        if self.body.stmts.is_empty() && self.is_extern {
+        if self.is_extern {
             write!(fmt, "extern ")?;
         }
 
@@ -156,11 +157,12 @@ impl Format for Function {
 
         write!(fmt, ")")?;
 
-        if !self.body.stmts.is_empty() && !self.is_extern {
-            fmt.block(|fmt| self.body.format(fmt))?;
-            writeln!(fmt)
-        } else {
-            writeln!(fmt, ";")
+        match &self.body {
+            Some(body) => {
+                fmt.block(|fmt| body.format(fmt))?;
+                writeln!(fmt)
+            }
+            None => writeln!(fmt, ";"),
         }
     }
 }
@@ -177,7 +179,7 @@ pub struct FunctionBuilder {
     is_inline: bool,
     is_static: bool,
     is_extern: bool,
-    body: Block,
+    body: Option<Block>,
     doc: Option<DocComment>,
 }
 
@@ -206,7 +208,7 @@ impl FunctionBuilder {
             is_inline: false,
             is_static: false,
             is_extern: false,
-            body: Block::new().build(),
+            body: None,
             doc: None,
         }
     }
@@ -335,7 +337,7 @@ impl FunctionBuilder {
     ///     .body(body);
     /// ```
     pub fn body(mut self, body: Block) -> Self {
-        self.body = body;
+        self.body = Some(body);
         self
     }
 
@@ -362,7 +364,10 @@ impl FunctionBuilder {
     ///     }));
     /// ```
     pub fn statement(mut self, stmt: Statement) -> Self {
-        self.body.stmts.push(stmt);
+        self.body
+            .get_or_insert_with(|| Block::new().build())
+            .stmts
+            .push(stmt);
         self
     }
 
@@ -392,7 +397,10 @@ impl FunctionBuilder {
     ///     }));
     /// ```
     pub fn new_line(mut self) -> Self {
-        self.body.stmts.push(Statement::NewLine);
+        self.body
+            .get_or_insert_with(|| Block::new().build())
+            .stmts
+            .push(Statement::NewLine);
         self
     }
 
@@ -468,7 +476,7 @@ impl FunctionBuilder {
             name: self.name,
             ret: self.ret,
             params: self.params,
-            is_inline: self.is_extern,
+            is_inline: self.is_inline,
             is_static: self.is_static,
             is_extern: self.is_extern,
             body: self.body,
@@ -625,7 +633,7 @@ mod tests {
                     .build(),
             )
             .build();
-        let res = r#"double some_function(double val) {
+        let res = r#"inline double some_function(double val) {
   return 1.23 + val;
 }
 "#;

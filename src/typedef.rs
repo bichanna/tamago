@@ -44,14 +44,6 @@ use tamacro::DisplayFromFormat;
 /// let typedef = TypeDef::new(person_type, "Person".to_string()).build();
 /// println!("{}", typedef); // Outputs: typedef struct Person Person;
 /// ```
-///
-/// Creating a typedef for a function pointer:
-/// ```rust
-/// // Creates a typedef for a callback function
-/// let callback_type = Type::new(BaseType::FunctionPointer(/* function pointer details */)).build();
-/// let typedef = TypeDef::new(callback_type, "Callback".to_string()).build();
-/// // Outputs something like: typedef void (*Callback)(int, void*);
-/// ```
 #[derive(Debug, Clone, DisplayFromFormat)]
 pub struct TypeDef {
     /// The type to be aliased.
@@ -120,7 +112,11 @@ impl Format for TypeDef {
     fn format(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
         write!(fmt, "typedef ")?;
         self.t.format(fmt)?;
-        writeln!(fmt, " {};", self.name)
+        write!(fmt, " {}", self.name)?;
+        if self.t.is_array() {
+            write!(fmt, "[{}]", self.t.array)?;
+        }
+        writeln!(fmt, ";")
     }
 }
 
