@@ -253,7 +253,10 @@ impl Format for GlobalStatement {
             Struct(s) => s.format(fmt),
             Function(f) => f.format(fmt),
             Union(u) => u.format(fmt),
-            Variable(v) => v.format(fmt),
+            Variable(v) => {
+                v.format(fmt)?;
+                writeln!(fmt, ";")
+            }
             TypeDef(t) => t.format(fmt),
             ErrorDirective(e) => e.format(fmt),
             IfDefDirective(i) => i.format(fmt),
