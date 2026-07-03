@@ -30,6 +30,7 @@
 
 use std::fmt::{self, Write};
 
+use crate::expr::escape_c_str;
 use crate::*;
 use tamacro::DisplayFromFormat;
 
@@ -309,7 +310,7 @@ impl ErrorDirective {
 
 impl Format for ErrorDirective {
     fn format(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
-        writeln!(fmt, "#error \"{}\"", self.message)
+        writeln!(fmt, "#error \"{}\"", escape_c_str(&self.message))
     }
 }
 
@@ -1633,7 +1634,7 @@ impl Format for LineDirective {
         }
 
         write!(fmt, "#line {} ", self.line)?;
-        writeln!(fmt, "\"{}\"", self.path)
+        writeln!(fmt, "\"{}\"", escape_c_str(&self.path))
     }
 }
 
@@ -1763,7 +1764,7 @@ impl WarningDirective {
 
 impl Format for WarningDirective {
     fn format(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
-        writeln!(fmt, "#warning \"{}\"", self.message)
+        writeln!(fmt, "#warning \"{}\"", escape_c_str(&self.message))
     }
 }
 

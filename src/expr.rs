@@ -46,7 +46,7 @@ use crate::{Format, Formatter, Type, Variable};
 use tamacro::{DisplayFromConstSymbol, DisplayFromFormat, FormatFromConstSymbol};
 
 /// Escapes a Rust string into the body of a C string literal (no surrounding quotes).
-fn escape_c_str(s: &str) -> String {
+pub(crate) fn escape_c_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     for &b in s.as_bytes() {
         match b {

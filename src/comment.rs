@@ -118,7 +118,7 @@ impl Comment {
     /// A `fmt::Result` indicating success or failure of the write operation
     fn push_heading(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
         if self.is_heading {
-            writeln!(fmt, "{}", "/".repeat(80 - fmt.spaces))?;
+            writeln!(fmt, "{}", "/".repeat(80usize.saturating_sub(fmt.spaces)))?;
         }
 
         Ok(())
@@ -487,30 +487,36 @@ impl DocCommentBuilder {
     ///     .build();
     /// ```
     pub fn text_str(self, text: &str) -> Self {
+        const MAX_WIDTH: usize = 80;
         let mut res = self;
         for line in text.lines() {
-            if line.is_empty() || line == "\n" {
-                res = res.line_str("");
+            if line.chars().count() <= MAX_WIDTH {
+                res = res.line_str(line);
                 continue;
             }
 
-            let mut start = 0;
-            let mut end = 0;
-            for (offset, c) in line.chars().enumerate() {
-                if c == ' ' && (offset - start) > 80 {
-                    res = res.line_str(&line[start..=end]);
-                    start = end;
+            let mut current = String::new();
+            let mut current_len = 0usize;
+            for word in line.split(' ') {
+                let word_len = word.chars().count();
+                if current.is_empty() {
+                    current.push_str(word);
+                    current_len = word_len;
+                } else if current_len + 1 + word_len <= MAX_WIDTH {
+                    current.push(' ');
+                    current.push_str(word);
+                    current_len += 1 + word_len;
+                } else {
+                    res = res.line_str(&current);
+                    current = word.to_string();
+                    current_len = word_len;
                 }
-                end = offset;
             }
 
-            if start == end {
-                res = res.line_str("");
-            } else {
-                res = res.line_str(&line[start..=end]);
+            if !current.is_empty() {
+                res = res.line_str(&current);
             }
         }
-
         res
     }
 
