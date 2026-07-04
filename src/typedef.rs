@@ -99,9 +99,9 @@ impl TypeDef {
     ///
     /// // Use the typedef in another declaration
     /// let point_type = typedef.to_type();
-    /// let pointer_to_point = Type::new(BaseType::Pointer(Box::new(point_type))).build();
+    /// let pointer_to_point = Type::ptr(point_type);
     ///
-    /// // This would represent: Point* pointPtr;
+    /// // This would represent: Point *pointPtr;
     /// ```
     pub fn to_type(&self) -> Type {
         Type::new(BaseType::TypeDef(self.name.clone())).build()

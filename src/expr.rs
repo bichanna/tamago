@@ -233,7 +233,7 @@ pub enum Expr {
 
     /// A type casting expression.
     ///
-    /// Example: `(int*)pointer`
+    /// Example: `(int *)pointer`
     Cast { t: Type, expr: Box<Expr> },
 
     /// A `sizeof` operator expression.

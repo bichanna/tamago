@@ -50,7 +50,7 @@ use tamacro::DisplayFromFormat;
 ///
 /// External variable declaration:
 /// ```c
-/// extern char* message;
+/// extern char *message;
 /// ```
 #[derive(Debug, Clone, DisplayFromFormat)]
 pub struct Variable {

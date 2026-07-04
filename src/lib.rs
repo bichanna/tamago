@@ -24,6 +24,12 @@
 //! It allows structured generation of C code using Rust, ensuring proper formatting and
 //! structure while maintaining readability.
 //!
+//! Notable capabilities include a recursive type model with a real declarator
+//! algorithm (so pointers, arrays, and function pointers nest correctly),
+//! precedence-aware expression printing that inserts only the parentheses a given
+//! grouping requires, and translation-unit splitting into a matching header and
+//! source pair via [`Module`].
+//!
 //! ## Modules
 //! - `function`: Defines and formats C functions.
 //! - `preprocessor`: Manages preprocessor directives like `#include`, `#define`, and `#pragma`.
@@ -36,6 +42,7 @@
 //! - `conditional`: Handles conditional statements like `if`, `switch`.
 //! - `formatter`: Provides utilities for formatting generated C code.
 //! - `scope`: Defines scope management for C code generation.
+//! - `module`: Splits a translation unit into a matching header (`.h`) and source (`.c`) pair.
 //! - `block`: Manages blocks of code within functions and control structures.
 //! - `comment`: Supports adding inline and documentation comments.
 //! - `expr`: Handles C expressions and operations.

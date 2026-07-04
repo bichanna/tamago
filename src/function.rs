@@ -53,7 +53,7 @@ use tamacro::DisplayFromFormat;
 ///
 /// External function declaration:
 /// ```c
-/// extern void process_data(char* buffer, size_t length);
+/// extern void process_data(char *buffer, size_t length);
 /// ```
 #[derive(Debug, Clone, DisplayFromFormat)]
 pub struct Function {

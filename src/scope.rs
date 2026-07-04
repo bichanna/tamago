@@ -186,7 +186,7 @@ impl ScopeBuilder {
 /// int number = 0;  // Variable declaration
 ///
 /// struct Person {   // Struct definition
-///   char* name;
+///   char *name;
 ///   int age;
 /// };
 /// ```
@@ -198,7 +198,7 @@ pub enum GlobalStatement {
     /// An enum definition (e.g., `enum Color { RED, GREEN, BLUE };`).
     Enum(Enum),
 
-    /// A struct definition (e.g., `struct Person { char* name; int age; };`).
+    /// A struct definition (e.g., `struct Person { char *name; int age; };`).
     Struct(Struct),
 
     /// A function declaration or definition.
