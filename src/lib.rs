@@ -43,6 +43,7 @@
 //! - `formatter`: Provides utilities for formatting generated C code.
 //! - `scope`: Defines scope management for C code generation.
 //! - `module`: Splits a translation unit into a matching header (`.h`) and source (`.c`) pair.
+//! - `ident`: Identifier hygiene — sanitizing names, C keyword checks, and fresh-name generation.
 //! - `block`: Manages blocks of code within functions and control structures.
 //! - `comment`: Supports adding inline and documentation comments.
 //! - `expr`: Handles C expressions and operations.
@@ -81,6 +82,7 @@ mod enums;
 mod expr;
 mod formatter;
 mod function;
+mod ident;
 mod loops;
 mod module;
 mod preprocessor;
@@ -98,6 +100,7 @@ pub use enums::{Enum, EnumBuilder, Variant, VariantBuilder};
 pub use expr::{AssignOp, BinOp, Expr, UnaryOp};
 pub use formatter::{Format, Formatter};
 pub use function::{Function, FunctionBuilder, Parameter, ParameterBuilder};
+pub use ident::{C_KEYWORDS, Gensym, is_c_keyword, sanitize_ident};
 pub use loops::{DoWhile, DoWhileBuilder, For, ForBuilder, While, WhileBuilder};
 pub use module::{HeaderGuard, Module, ModuleBuilder};
 pub use preprocessor::{

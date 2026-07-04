@@ -226,6 +226,12 @@ pub enum Expr {
     /// Example: `person.name`
     MemAccess { expr: Box<Expr>, member: String },
 
+    /// A struct-pointer member access expression (the `->` operator), i.e.
+    /// shorthand for dereferencing and then accessing a member.
+    ///
+    /// Example: `person->name`
+    PtrMemAccess { expr: Box<Expr>, member: String },
+
     /// An array indexing expression.
     ///
     /// Example: `array[index]`
@@ -455,6 +461,41 @@ impl Expr {
         Self::new_mem_access(expr, member.to_string())
     }
 
+    /// Creates a new struct-pointer member access expression (the `->`
+    /// operator).
+    ///
+    /// # Arguments
+    ///
+    /// * `expr` - The expression representing the pointer to a struct instance.
+    /// * `member` - The name of the struct member as a String.
+    ///
+    /// # Returns
+    ///
+    /// A new `Expr::PtrMemAccess` representing the member access.
+    pub fn new_ptr_mem_access(expr: Expr, member: String) -> Self {
+        Self::PtrMemAccess {
+            expr: Box::new(expr),
+            member,
+        }
+    }
+
+    /// Creates a new struct-pointer member access expression (the `->`
+    /// operator) with a string slice.
+    ///
+    /// This is a convenience method that converts the string slice to a String.
+    ///
+    /// # Arguments
+    ///
+    /// * `expr` - The expression representing the pointer to a struct instance.
+    /// * `member` - The name of the struct member as a string slice.
+    ///
+    /// # Returns
+    ///
+    /// A new `Expr::PtrMemAccess` representing the member access.
+    pub fn new_ptr_mem_access_with_str(expr: Expr, member: &str) -> Self {
+        Self::new_ptr_mem_access(expr, member.to_string())
+    }
+
     /// Creates a new array indexing expression.
     ///
     /// # Arguments
@@ -629,7 +670,9 @@ impl Expr {
 
             // Calls, subscripting, and member access are postfix. `Inc`/`Dec`
             // are rendered postfix here too, so they sit at the postfix level
-            FnCall { .. } | MemAccess { .. } | ArrIndex { .. } => PREC_POSTFIX,
+            FnCall { .. } | MemAccess { .. } | PtrMemAccess { .. } | ArrIndex { .. } => {
+                PREC_POSTFIX
+            }
             Unary { op, .. } if matches!(op, UnaryOp::Inc | UnaryOp::Dec) => PREC_POSTFIX,
 
             // Remaining unary operators are prefix und casts share their level
@@ -741,6 +784,10 @@ impl Format for Expr {
             MemAccess { expr, member } => {
                 expr.fmt_paren_if(fmt, expr.precedence() < PREC_POSTFIX)?;
                 write!(fmt, ".{member}")
+            }
+            PtrMemAccess { expr, member } => {
+                expr.fmt_paren_if(fmt, expr.precedence() < PREC_POSTFIX)?;
+                write!(fmt, "->{member}")
             }
             ArrIndex { arr, idx } => {
                 arr.fmt_paren_if(fmt, arr.precedence() < PREC_POSTFIX)?;
@@ -1060,6 +1107,30 @@ mod tests {
         let m = Expr::new_mem_access(Expr::Ident("person".to_string()), "age".to_string());
         let res = "person.age";
         assert_eq!(m.to_string(), res);
+    }
+
+    #[test]
+    fn ptr_mem_access() {
+        let m = Expr::new_ptr_mem_access_with_str(Expr::new_ident_with_str("person"), "age");
+        assert_eq!(m.to_string(), "person->age");
+
+        let chained = Expr::new_ptr_mem_access_with_str(
+            Expr::new_ptr_mem_access_with_str(Expr::new_ident_with_str("a"), "b"),
+            "c",
+        );
+        assert_eq!(chained.to_string(), "a->b->c");
+
+        let deref = Expr::new_ptr_mem_access_with_str(
+            Expr::new_unary(Expr::new_ident_with_str("pp"), UnaryOp::Deref),
+            "x",
+        );
+        assert_eq!(deref.to_string(), "(*pp)->x");
+
+        let mixed = Expr::new_mem_access_with_str(
+            Expr::new_ptr_mem_access_with_str(Expr::new_ident_with_str("node"), "next"),
+            "value",
+        );
+        assert_eq!(mixed.to_string(), "node->next.value");
     }
 
     #[test]
