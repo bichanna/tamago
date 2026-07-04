@@ -659,7 +659,7 @@ case NULL: {
   // Hello, world
   // Another comment
 }
-case (uint8_t)(123): {
+case (uint8_t)123: {
   #define AGE 18
 }
 default: {

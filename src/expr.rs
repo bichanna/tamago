@@ -567,6 +567,103 @@ impl Expr {
     }
 }
 
+const PREC_ASSIGN: u8 = 2; // = += -= ... (right associative)
+const PREC_TERNARY: u8 = 3; // ?: (right asociative)
+const PREC_LOGIC_OR: u8 = 4; // ||
+const PREC_LOGIC_AND: u8 = 5; // &&
+const PREC_BIT_OR: u8 = 6; // |
+const PREC_BIT_XOR: u8 = 7; // ^
+const PREC_BIT_AND: u8 = 8; // &
+const PREC_EQ: u8 = 9; // == !=
+const PREC_REL: u8 = 10; // < <= > >=
+const PREC_SHIFT: u8 = 11; // << >>
+const PREC_ADD: u8 = 12; // + -
+const PREC_MUL: u8 = 13; // * / %
+const PREC_UNARY: u8 = 14; // prefix ! ~ - & *  and casts (right associative)
+const PREC_POSTFIX: u8 = 15; // postfix ++ -- , calls, [] and . member access
+const PREC_PRIMARY: u8 = 16; // literals, identifiers, and anything self-delimiting, basically
+
+impl BinOp {
+    /// Returns the C precedence level of this binary operator (higher binds
+    /// tighter). Every binary operator in C is left-associative
+    pub fn precedence(&self) -> u8 {
+        use BinOp::*;
+        match self {
+            Mul | Div | Mod => PREC_MUL,
+            Add | Sub => PREC_ADD,
+            LShift | RShift => PREC_SHIFT,
+            LT | LTE | GT | GTE => PREC_REL,
+            Eq | NEq => PREC_EQ,
+            BitAnd => PREC_BIT_AND,
+            XOr => PREC_BIT_XOR,
+            BitOr => PREC_BIT_OR,
+            And => PREC_LOGIC_AND,
+            Or => PREC_LOGIC_OR,
+        }
+    }
+}
+
+impl Expr {
+    /// Returns the C precedence level of this expression (higher binds tighter).
+    ///
+    /// This is what drives minimal parenthesization when formatting: a child
+    /// expression is wrapped in parentheses only when its precedence (and
+    /// associativity) would otherwise cause the emitted C to regroup.
+    pub fn precedence(&self) -> u8 {
+        use Expr::*;
+        match self {
+            Int(_)
+            | UInt(_)
+            | Double(_)
+            | Float(_)
+            | Bool(_)
+            | Char(_)
+            | Str(_)
+            | Ident(_)
+            | Variable(_)
+            | Parenthesized { .. }
+            | SizeOf(_)
+            | InitArr(_)
+            | InitStruct(_)
+            | Raw(_) => PREC_PRIMARY,
+
+            // Calls, subscripting, and member access are postfix. `Inc`/`Dec`
+            // are rendered postfix here too, so they sit at the postfix level
+            FnCall { .. } | MemAccess { .. } | ArrIndex { .. } => PREC_POSTFIX,
+            Unary { op, .. } if matches!(op, UnaryOp::Inc | UnaryOp::Dec) => PREC_POSTFIX,
+
+            // Remaining unary operators are prefix und casts share their level
+            Unary { .. } | Cast { .. } => PREC_UNARY,
+
+            Binary { op, .. } => op.precedence(),
+            Ternary { .. } => PREC_TERNARY,
+            Assign { .. } => PREC_ASSIGN,
+        }
+    }
+
+    /// Formats `self`, wrapping it in parentheses iff `parens` is true.
+    fn fmt_paren_if(&self, fmt: &mut Formatter<'_>, parens: bool) -> fmt::Result {
+        if parens {
+            write!(fmt, "(")?;
+            self.format(fmt)?;
+            write!(fmt, ")")
+        } else {
+            self.format(fmt)
+        }
+    }
+}
+
+/// Returns true when placing `operand` directly after the prefix operator `op`
+/// would merge into a different token (e.g. `-` followed by `-x` becoming `--x`,
+/// or `&` followed by `&x` becoming `&&`). In those cases a separating space is
+/// emitted instead of relying on parentheses.
+fn needs_separating_space(op: &str, operand: &str) -> bool {
+    matches!(
+        (op.chars().last(), operand.chars().next()),
+        (Some('-'), Some('-')) | (Some('+'), Some('+')) | (Some('&'), Some('&'))
+    )
+}
+
 impl Format for Expr {
     fn format(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
         use Expr::*;
@@ -581,11 +678,12 @@ impl Format for Expr {
             Ident(name) => write!(fmt, "{name}"),
             Variable(var) => var.format(fmt),
             Binary { left, op, right } => {
-                left.format(fmt)?;
+                let p = op.precedence();
+                left.fmt_paren_if(fmt, left.precedence() < p)?;
                 write!(fmt, " ")?;
                 op.format(fmt)?;
                 write!(fmt, " ")?;
-                right.format(fmt)
+                right.fmt_paren_if(fmt, right.precedence() <= p)
             }
             Parenthesized { expr } => {
                 write!(fmt, "(")?;
@@ -593,31 +691,41 @@ impl Format for Expr {
                 write!(fmt, ")")
             }
             Unary { op, expr } => {
-                if !matches!(op, UnaryOp::Inc | UnaryOp::Dec) {
-                    op.format(fmt)?;
-                }
-                expr.format(fmt)?;
                 if matches!(op, UnaryOp::Inc | UnaryOp::Dec) {
+                    expr.fmt_paren_if(fmt, expr.precedence() < PREC_POSTFIX)?;
+                    op.format(fmt)
+                } else {
+                    // prefix operator
                     op.format(fmt)?;
+                    if expr.precedence() < PREC_UNARY {
+                        write!(fmt, "(")?;
+                        expr.format(fmt)?;
+                        write!(fmt, ")")
+                    } else {
+                        let operand = expr.to_string();
+                        if needs_separating_space(&op.to_string(), &operand) {
+                            write!(fmt, " ")?;
+                        }
+                        write!(fmt, "{operand}")
+                    }
                 }
-                Ok(())
             }
             Assign { lvalue, op, value } => {
-                lvalue.format(fmt)?;
+                lvalue.fmt_paren_if(fmt, lvalue.precedence() <= PREC_ASSIGN)?;
                 write!(fmt, " ")?;
                 op.format(fmt)?;
                 write!(fmt, " ")?;
-                value.format(fmt)
+                value.fmt_paren_if(fmt, value.precedence() < PREC_ASSIGN)
             }
             Ternary { cond, lexpr, rexpr } => {
-                cond.format(fmt)?;
+                cond.fmt_paren_if(fmt, cond.precedence() <= PREC_TERNARY)?;
                 write!(fmt, " ? ")?;
                 lexpr.format(fmt)?;
                 write!(fmt, " : ")?;
-                rexpr.format(fmt)
+                rexpr.fmt_paren_if(fmt, rexpr.precedence() < PREC_TERNARY)
             }
             FnCall { name, args } => {
-                name.format(fmt)?;
+                name.fmt_paren_if(fmt, name.precedence() < PREC_POSTFIX)?;
                 write!(fmt, "(")?;
                 if !args.is_empty() {
                     for arg in &args[..args.len() - 1] {
@@ -631,11 +739,11 @@ impl Format for Expr {
                 write!(fmt, ")")
             }
             MemAccess { expr, member } => {
-                expr.format(fmt)?;
+                expr.fmt_paren_if(fmt, expr.precedence() < PREC_POSTFIX)?;
                 write!(fmt, ".{member}")
             }
             ArrIndex { arr, idx } => {
-                arr.format(fmt)?;
+                arr.fmt_paren_if(fmt, arr.precedence() < PREC_POSTFIX)?;
                 write!(fmt, "[")?;
                 idx.format(fmt)?;
                 write!(fmt, "]")
@@ -644,9 +752,7 @@ impl Format for Expr {
                 write!(fmt, "(")?;
                 t.format(fmt)?;
                 write!(fmt, ")")?;
-                write!(fmt, "(")?;
-                expr.format(fmt)?;
-                write!(fmt, ")")
+                expr.fmt_paren_if(fmt, expr.precedence() < PREC_UNARY)
             }
             SizeOf(t) => {
                 write!(fmt, "sizeof(")?;
@@ -969,8 +1075,137 @@ mod tests {
             Type::new(BaseType::Void).make_pointer().build(),
             Expr::Ident("something".to_string()),
         );
-        let res = "(void *)(something)";
+        let res = "(void *)something";
         assert_eq!(c.to_string(), res);
+    }
+
+    #[test]
+    fn precedence_parenthesization() {
+        let a = || Box::new(Expr::Ident("a".to_string()));
+        let b = || Box::new(Expr::Ident("b".to_string()));
+        let c = || Box::new(Expr::Ident("c".to_string()));
+
+        // Tighter child on the right needs no parens
+        let e = Expr::Binary {
+            left: a(),
+            op: BinOp::Add,
+            right: Box::new(Expr::Binary {
+                left: b(),
+                op: BinOp::Mul,
+                right: c(),
+            }),
+        };
+        assert_eq!(e.to_string(), "a + b * c");
+
+        // Looser child forced tighter needs parens
+        let e = Expr::Binary {
+            left: Box::new(Expr::Binary {
+                left: a(),
+                op: BinOp::Add,
+                right: b(),
+            }),
+            op: BinOp::Mul,
+            right: c(),
+        };
+        assert_eq!(e.to_string(), "(a + b) * c");
+
+        let left_nested = Expr::Binary {
+            left: Box::new(Expr::Binary {
+                left: a(),
+                op: BinOp::Sub,
+                right: b(),
+            }),
+            op: BinOp::Sub,
+            right: c(),
+        };
+        assert_eq!(left_nested.to_string(), "a - b - c");
+
+        let right_nested = Expr::Binary {
+            left: a(),
+            op: BinOp::Sub,
+            right: Box::new(Expr::Binary {
+                left: b(),
+                op: BinOp::Sub,
+                right: c(),
+            }),
+        };
+        assert_eq!(right_nested.to_string(), "a - (b - c)");
+    }
+
+    #[test]
+    fn precedence_unary_and_mixed() {
+        let a = || Box::new(Expr::Ident("a".to_string()));
+        let b = || Box::new(Expr::Ident("b".to_string()));
+
+        // Dereference of a sum
+        let e = Expr::Unary {
+            op: UnaryOp::Deref,
+            expr: Box::new(Expr::Binary {
+                left: a(),
+                op: BinOp::Add,
+                right: b(),
+            }),
+        };
+        assert_eq!(e.to_string(), "*(a + b)");
+
+        // Negation of a negation must not fuse into `--`
+        let e = Expr::Unary {
+            op: UnaryOp::Neg,
+            expr: Box::new(Expr::Unary {
+                op: UnaryOp::Neg,
+                expr: a(),
+            }),
+        };
+        assert_eq!(e.to_string(), "- -a");
+
+        // Call through a function pointer
+        let e = Expr::FnCall {
+            name: Box::new(Expr::Unary {
+                op: UnaryOp::Deref,
+                expr: Box::new(Expr::Ident("fp".to_string())),
+            }),
+            args: vec![*a()],
+        };
+        assert_eq!(e.to_string(), "(*fp)(a)");
+
+        // Member access on a dereference
+        let e = Expr::MemAccess {
+            expr: Box::new(Expr::Unary {
+                op: UnaryOp::Deref,
+                expr: Box::new(Expr::Ident("p".to_string())),
+            }),
+            member: "x".to_string(),
+        };
+        assert_eq!(e.to_string(), "(*p).x");
+    }
+
+    #[test]
+    fn precedence_assign_and_ternary() {
+        let a = || Box::new(Expr::Ident("a".to_string()));
+        let b = || Box::new(Expr::Ident("b".to_string()));
+        let c = || Box::new(Expr::Ident("c".to_string()));
+
+        let e = Expr::Assign {
+            lvalue: a(),
+            op: AssignOp::Assign,
+            value: Box::new(Expr::Assign {
+                lvalue: b(),
+                op: AssignOp::Assign,
+                value: c(),
+            }),
+        };
+        assert_eq!(e.to_string(), "a = b = c");
+
+        let e = Expr::Ternary {
+            cond: a(),
+            lexpr: b(),
+            rexpr: Box::new(Expr::Assign {
+                lvalue: c(),
+                op: AssignOp::Assign,
+                value: Box::new(Expr::Int(0)),
+            }),
+        };
+        assert_eq!(e.to_string(), "a ? b : (c = 0)");
     }
 
     #[test]
