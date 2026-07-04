@@ -27,7 +27,7 @@
 
 use std::fmt::{self, Write};
 
-use crate::{declare, DocComment, Expr, Format, Formatter, Type};
+use crate::{DocComment, Expr, Format, Formatter, Type, declare};
 use tamacro::DisplayFromFormat;
 
 /// Represents a C variable with its properties and attributes.

@@ -28,7 +28,7 @@
 
 use std::fmt::{self, Write};
 
-use crate::{declare, BaseType, DocComment, Format, Formatter, Type};
+use crate::{BaseType, DocComment, Format, Formatter, Type, declare};
 use tamacro::DisplayFromFormat;
 
 /// Represents a struct in C.

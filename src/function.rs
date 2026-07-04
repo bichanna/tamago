@@ -26,7 +26,7 @@
 
 use std::fmt::{self, Write};
 
-use crate::{declare, Block, DocComment, Format, Formatter, Statement, Type};
+use crate::{Block, DocComment, Format, Formatter, Statement, Type, declare};
 use tamacro::DisplayFromFormat;
 
 /// Represents a C function with all its components and attributes.

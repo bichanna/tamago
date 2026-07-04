@@ -26,7 +26,7 @@
 
 use std::fmt::{self, Write};
 
-use crate::{declare, BaseType, Format, Formatter, Type};
+use crate::{BaseType, Format, Formatter, Type, declare};
 use tamacro::DisplayFromFormat;
 
 /// Represents a C-style `typedef` declaration.

@@ -102,6 +102,6 @@ pub use preprocessor::{
 pub use scope::{GlobalStatement, Scope, ScopeBuilder};
 pub use structs::{Field, FieldBuilder, Struct, StructBuilder};
 pub use typedef::{TypeDef, TypeDefBuilder};
-pub use types::{declare, BaseType, Type, TypeBuilder, TypeQualifier};
+pub use types::{BaseType, Type, TypeBuilder, TypeQualifier, declare};
 pub use union::{Union, UnionBuilder};
 pub use variable::{Variable, VariableBuilder};
