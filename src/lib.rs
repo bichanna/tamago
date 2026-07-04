@@ -75,6 +75,7 @@ mod expr;
 mod formatter;
 mod function;
 mod loops;
+mod module;
 mod preprocessor;
 mod scope;
 mod structs;
@@ -91,6 +92,7 @@ pub use expr::{AssignOp, BinOp, Expr, UnaryOp};
 pub use formatter::{Format, Formatter};
 pub use function::{Function, FunctionBuilder, Parameter, ParameterBuilder};
 pub use loops::{DoWhile, DoWhileBuilder, For, ForBuilder, While, WhileBuilder};
+pub use module::{HeaderGuard, Module, ModuleBuilder};
 pub use preprocessor::{
     ErrorDirective, ErrorDirectiveBuilder, FuncMacro, FuncMacroBuilder, IfDefDirective,
     IfDefDirectiveBuilder, IfDirective, IfDirectiveBuilder, Include, IncludeBuilder, LineDirective,

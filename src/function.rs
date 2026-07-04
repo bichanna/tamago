@@ -118,6 +118,32 @@ impl Function {
     pub fn new(name: String, ret: Type) -> FunctionBuilder {
         FunctionBuilder::new(name, ret)
     }
+
+    /// Returns a prototype (declaration-only) copy of this function: same name,
+    /// return type, parameters, and modifiers, but with the body dropped so it
+    /// renders as `ret name(params);`
+    ///
+    /// This is the main way to place a declaration in a header while keeping
+    /// the definition in a source file.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let def = FunctionBuilder::new_with_str("add", Type::new(BaseType::Int).build())
+    ///     .body(Block::new().build())
+    ///     .build();
+    /// assert_eq!(def.to_prototype().to_string(), "int add(void);\n");
+    /// ```
+    pub fn to_prototype(&self) -> Function {
+        let mut proto = self.clone();
+        proto.body = None;
+        proto
+    }
+
+    /// Returns `true` if this function is a prototype (has no body).
+    pub fn is_prototype(&self) -> bool {
+        self.body.is_none()
+    }
 }
 
 impl Format for Function {
