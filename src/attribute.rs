@@ -212,6 +212,33 @@ pub fn format_attrs(attrs: &[Attribute], style: AttrStyle) -> String {
     }
 }
 
+/// Renders raw macro/specifier tokens followed by the typed attribute group, or
+/// the empty string if both are empty
+///
+/// This is the combined form used at each item's annotation slot: the raw tokens
+/// (verbatim macros like `MYLANG_EXPORT` or `__declspec(dllexport)`) come first,
+/// then the typed [`Attribute`]s grouped into one `__attribute__((...))` / `[[...]]`.
+///
+/// # Examples
+///
+/// ```rust
+/// let raw = vec!["MYLANG_EXPORT".to_string()];
+/// let typed = vec![Attribute::noreturn()];
+/// assert_eq!(
+///     format_annotations(&raw, &typed, AttrStyle::Gnu),
+///     "MYLANG_EXPORT __attribute__((noreturn))"
+/// );
+/// ```
+pub fn format_annotations(raw: &[String], typed: &[Attribute], style: AttrStyle) -> String {
+    let typed = format_attrs(typed, style);
+    match (raw.is_empty(), typed.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => raw.join(" "),
+        (true, false) => typed,
+        (false, false) => format!("{} {typed}", raw.join(" ")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

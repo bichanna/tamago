@@ -261,8 +261,78 @@ pub enum Expr {
     /// - Designated: `{.x=1, .name="hello"}`
     InitStruct(Vec<(Option<String>, Expr)>),
 
+    /// A compound literal (C99): a parenthesized type followed by a brace
+    /// initializer, e.g. `(Point){1, 2}` or `(int[]){1, 2, 3}`.
+    ///
+    /// Prefer this over a cast applied to a brace initializer — a compound
+    /// literal is a distinct construct (and an lvalue), not a cast
+    CompoundLiteral {
+        /// The type being constructed
+        t: Type,
+        /// The brace initializer (typically an [`Expr::InitStruct`] or
+        /// [`Expr::InitArr`]).
+        init: Box<Expr>,
+    },
+
+    /// An integer literal with an explicit radix and suffix, e.g. `0xFFULL`
+    ///
+    /// Unlike [`Expr::Int`]/[`Expr::UInt`], this gives control over the base and
+    /// the `u`/`l`/`ll` suffix, which is what you need for width- and
+    /// signedness-correct constants across data models.
+    IntLit {
+        /// The literal value.
+        value: i128,
+        /// The radix used to render it.
+        base: IntBase,
+        /// The integer suffix (`U`, `L`, `UL`, `LL`, `ULL`).
+        suffix: IntSuffix,
+    },
+
     /// A raw C expression as a string (for cases not covered by other variants).
     Raw(String),
+}
+
+/// The radix used to render an [`Expr::IntLit`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IntBase {
+    /// Decimal, e.g. `42`.
+    #[default]
+    Dec,
+    /// Hexadecimal, e.g. `0x2A`.
+    Hex,
+    /// Octal, e.g. `052`.
+    Oct,
+}
+
+/// The suffix applied to an [`Expr::IntLit`], controlling its type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IntSuffix {
+    /// No suffix (`int`).
+    #[default]
+    None,
+    /// `U` (`unsigned int`).
+    U,
+    /// `L` (`long`).
+    L,
+    /// `UL` (`unsigned long`).
+    UL,
+    /// `LL` (`long long`).
+    LL,
+    /// `ULL` (`unsigned long long`).
+    ULL,
+}
+
+impl IntSuffix {
+    fn as_str(self) -> &'static str {
+        match self {
+            IntSuffix::None => "",
+            IntSuffix::U => "U",
+            IntSuffix::L => "L",
+            IntSuffix::UL => "UL",
+            IntSuffix::LL => "LL",
+            IntSuffix::ULL => "ULL",
+        }
+    }
 }
 
 impl Expr {
@@ -530,6 +600,46 @@ impl Expr {
         }
     }
 
+    /// Creates a compound literal `(t){init}`.
+    ///
+    /// `init` is typically an [`Expr::new_init_struct_in_order`] /
+    /// [`Expr::new_init_struct_designated`] or an array initializer.
+    ///
+    /// # Examples
+    /// ```rust
+    /// let p = Expr::new_compound_literal(
+    ///     Type::base(BaseType::TypeDef("Point".to_string())),
+    ///     Expr::new_init_struct_in_order(vec![Expr::Int(1), Expr::Int(2)]),
+    /// );
+    /// assert_eq!(p.to_string(), "(Point){1, 2}");
+    /// ```
+    pub fn new_compound_literal(t: Type, init: Expr) -> Self {
+        Self::CompoundLiteral {
+            t,
+            init: Box::new(init),
+        }
+    }
+
+    /// Creates a decimal integer literal with an explicit suffix, e.g.
+    /// `Expr::new_int_lit(1, IntSuffix::ULL)` renders `1ULL`.
+    pub fn new_int_lit(value: i128, suffix: IntSuffix) -> Self {
+        Self::IntLit {
+            value,
+            base: IntBase::Dec,
+            suffix,
+        }
+    }
+
+    /// Creates a hexadecimal integer literal with an explicit suffix, e.g.
+    /// `Expr::new_hex(255, IntSuffix::U)` renders `0xFFU`.
+    pub fn new_hex(value: i128, suffix: IntSuffix) -> Self {
+        Self::IntLit {
+            value,
+            base: IntBase::Hex,
+            suffix,
+        }
+    }
+
     /// Creates a new `sizeof` operator expression.
     ///
     /// # Arguments
@@ -666,6 +776,8 @@ impl Expr {
             | SizeOf(_)
             | InitArr(_)
             | InitStruct(_)
+            | CompoundLiteral { .. }
+            | IntLit { .. }
             | Raw(_) => PREC_PRIMARY,
 
             // Calls, subscripting, and member access are postfix. `Inc`/`Dec`
@@ -843,6 +955,29 @@ impl Format for Expr {
                     }
                 }
                 write!(fmt, "}}")
+            }
+            CompoundLiteral { t, init } => {
+                write!(fmt, "(")?;
+                t.format(fmt)?;
+                write!(fmt, ")")?;
+                init.format(fmt)
+            }
+            IntLit {
+                value,
+                base,
+                suffix,
+            } => {
+                let neg = *value < 0;
+                let mag = value.unsigned_abs();
+                if neg {
+                    write!(fmt, "-")?;
+                }
+                match base {
+                    IntBase::Dec => write!(fmt, "{mag}")?,
+                    IntBase::Hex => write!(fmt, "0x{mag:X}")?,
+                    IntBase::Oct => write!(fmt, "0{mag:o}")?,
+                }
+                write!(fmt, "{}", suffix.as_str())
             }
             Raw(s) => write!(fmt, "{s}"),
         }
@@ -1148,6 +1283,35 @@ mod tests {
         );
         let res = "(void *)something";
         assert_eq!(c.to_string(), res);
+    }
+
+    #[test]
+    fn int_literals_with_suffixes() {
+        assert_eq!(Expr::new_int_lit(1, IntSuffix::ULL).to_string(), "1ULL");
+        assert_eq!(Expr::new_int_lit(-5, IntSuffix::L).to_string(), "-5L");
+        assert_eq!(Expr::new_hex(255, IntSuffix::U).to_string(), "0xFFU");
+        assert_eq!(Expr::new_hex(4096, IntSuffix::None).to_string(), "0x1000");
+        assert_eq!(
+            Expr::IntLit {
+                value: 42,
+                base: IntBase::Oct,
+                suffix: IntSuffix::None
+            }
+            .to_string(),
+            "052"
+        );
+    }
+
+    #[test]
+    fn compound_literal() {
+        let cl = Expr::new_compound_literal(
+            Type::base(BaseType::TypeDef("Point".to_string())),
+            Expr::new_init_struct_in_order(vec![Expr::Int(1), Expr::Int(2)]),
+        );
+        assert_eq!(cl.to_string(), "(Point){1, 2}");
+
+        let access = Expr::new_mem_access_with_str(cl, "x");
+        assert_eq!(access.to_string(), "(Point){1, 2}.x");
     }
 
     #[test]

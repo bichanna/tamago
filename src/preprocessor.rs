@@ -1169,6 +1169,10 @@ pub struct IfDirective {
     /// The code block to include if the condition evaluates to true (non-zero).
     pub then: ScopeOrBlock,
 
+    /// Any number of `#elif` branches, each a `(condition, body)` pair, tried in
+    /// order after `then` fails.
+    pub elifs: Vec<(String, ScopeOrBlock)>,
+
     /// The optional code block to include if the condition evaluates to false (zero).
     /// This corresponds to the `#else` part of the directive.
     pub other: Option<ScopeOrBlock>,
@@ -1201,6 +1205,11 @@ impl Format for IfDirective {
         writeln!(fmt, "#if {}", self.cond)?;
         self.then.format(fmt)?;
 
+        for (cond, body) in &self.elifs {
+            writeln!(fmt, "#elif {cond}")?;
+            body.format(fmt)?;
+        }
+
         if let Some(other) = &self.other {
             writeln!(fmt, "#else")?;
             other.format(fmt)?;
@@ -1218,6 +1227,7 @@ impl Format for IfDirective {
 pub struct IfDirectiveBuilder {
     cond: String,
     then: ScopeOrBlock,
+    elifs: Vec<(String, ScopeOrBlock)>,
     other: Option<ScopeOrBlock>,
 }
 
@@ -1242,6 +1252,7 @@ impl IfDirectiveBuilder {
         Self {
             cond,
             then: ScopeOrBlock::Scope(Scope::new().build()),
+            elifs: vec![],
             other: None,
         }
     }
@@ -1327,6 +1338,23 @@ impl IfDirectiveBuilder {
         self
     }
 
+    /// Appends an `#elif` branch with the given condition and body, and returns
+    /// the builder for more chaining. Branches are emitted in the order added.
+    ///
+    /// # Examples
+    /// ```rust
+    /// let dir = IfDirectiveBuilder::new_with_str("defined(_WIN32)")
+    ///     .then(windows_scope)
+    ///     .elif("defined(__linux__)", linux_scope)
+    ///     .elif("defined(__APPLE__)", macos_scope)
+    ///     .other(fallback_scope)
+    ///     .build();
+    /// ```
+    pub fn elif(mut self, cond: &str, body: ScopeOrBlock) -> Self {
+        self.elifs.push((cond.to_string(), body));
+        self
+    }
+
     /// Consumes the builder and returns a fully constructed `IfDirective`.
     ///
     /// # Returns
@@ -1335,6 +1363,7 @@ impl IfDirectiveBuilder {
         IfDirective {
             cond: self.cond,
             then: self.then,
+            elifs: self.elifs,
             other: self.other,
         }
     }
@@ -1902,6 +1931,41 @@ mod tests {
         let res = r#"#if SOMETHING
 identifier;
 #error "some error"
+#endif
+"#;
+        assert_eq!(i.to_string(), res);
+    }
+
+    #[test]
+    fn if_directive_elif_chain() {
+        let win = ScopeOrBlock::Scope(
+            ScopeBuilder::new()
+                .global_statement(GlobalStatement::Raw("typedef void *Handle;".to_string()))
+                .build(),
+        );
+        let linux = ScopeOrBlock::Scope(
+            ScopeBuilder::new()
+                .global_statement(GlobalStatement::Raw("typedef int Handle;".to_string()))
+                .build(),
+        );
+        let other = ScopeOrBlock::Scope(
+            ScopeBuilder::new()
+                .global_statement(GlobalStatement::Raw("typedef long Handle;".to_string()))
+                .build(),
+        );
+
+        let i = IfDirectiveBuilder::new_with_str("defined(_WIN32)")
+            .then(win)
+            .elif("defined(__linux__)", linux)
+            .other(other)
+            .build();
+
+        let res = r#"#if defined(_WIN32)
+typedef void *Handle;
+#elif defined(__linux__)
+typedef int Handle;
+#else
+typedef long Handle;
 #endif
 "#;
         assert_eq!(i.to_string(), res);

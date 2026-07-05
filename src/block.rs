@@ -36,8 +36,8 @@ use std::fmt::{self, Write};
 
 use crate::{
     Comment, DoWhile, ErrorDirective, Expr, For, Format, Formatter, If, IfDefDirective,
-    IfDirective, Include, LineDirective, Macro, PragmaDirective, SourceLoc, Switch, Variable,
-    WarningDirective, While,
+    IfDirective, Include, LineDirective, Macro, PragmaDirective, SourceLoc, StaticAssert, Switch,
+    Variable, WarningDirective, While,
 };
 use tamacro::DisplayFromFormat;
 
@@ -416,6 +416,9 @@ pub enum Statement {
     /// Useful for edge cases not covered by other statement types
     Raw(String),
 
+    /// A compile-time assertion, e.g. `_Static_assert(sizeof(T) == 8, "...")`.
+    StaticAssert(StaticAssert),
+
     /// A statement tagged with a source location.
     ///
     /// When rendered with line directives enabled (see
@@ -488,6 +491,10 @@ impl Format for Statement {
             PragmaDirective(p) => p.format(fmt),
             WarningDirective(w) => w.format(fmt),
             Raw(s) => writeln!(fmt, "{s}"),
+            StaticAssert(sa) => {
+                sa.format(fmt)?;
+                writeln!(fmt, ";")
+            }
             Located { loc, stmt } => {
                 fmt.sync_line(loc)?;
                 stmt.format(fmt)

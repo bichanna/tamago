@@ -240,6 +240,9 @@ pub enum GlobalStatement {
     /// A raw piece of code inserted directly without processing.
     Raw(String),
 
+    /// A compile-time assertion, e.g. `_Static_assert(sizeof(T) == 8, "...")`.
+    StaticAssert(StaticAssert),
+
     /// A global statement tagged with a source location. When rendered with line
     /// directives enabled, emits `#line N "file"` before the inner statement
     /// whenever the location changes.
@@ -287,6 +290,10 @@ impl Format for GlobalStatement {
             PragmaDirective(p) => p.format(fmt),
             WarningDirective(w) => w.format(fmt),
             Raw(r) => writeln!(fmt, "{r}"),
+            StaticAssert(sa) => {
+                sa.format(fmt)?;
+                writeln!(fmt, ";")
+            }
             Located { loc, stmt } => {
                 fmt.sync_line(loc)?;
                 stmt.format(fmt)

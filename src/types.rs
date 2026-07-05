@@ -396,6 +396,12 @@ pub enum Type {
         /// Whether the function is variadic (a trailing `...`).
         variadic: bool,
     },
+
+    /// A raw, verbatim type spelling used as an escape hatch for types Tamago
+    /// does not model (e.g. `_Atomic(int)`, a vector type, or a compiler
+    /// builtin). It behaves like a base type in the declarator: the identifier
+    /// is placed after it.
+    Raw(String),
 }
 
 /// Renders a full C declaration for `ty` naming the declarator `inner`.
@@ -459,6 +465,15 @@ pub fn declare(ty: &Type, inner: &str) -> String {
                 parts.join(", ")
             };
             declare(ret, &format!("{inner}({params_str})"))
+        }
+        Type::Raw(spelling) => {
+            if inner.is_empty() {
+                spelling.clone()
+            } else if inner.starts_with('[') {
+                format!("{spelling}{inner}")
+            } else {
+                format!("{spelling} {inner}")
+            }
         }
     }
 }
@@ -552,6 +567,18 @@ impl Type {
             params,
             variadic,
         }
+    }
+
+    /// Creates a raw, verbatim type from an arbitrary spelling — an escape hatch
+    /// for types Tamago does not model.
+    ///
+    /// # Examples
+    /// ```rust
+    /// let t = Type::raw("_Atomic(int)");
+    /// assert_eq!(t.declarator("counter"), "_Atomic(int) counter");
+    /// ```
+    pub fn raw(spelling: impl Into<String>) -> Type {
+        Type::Raw(spelling.into())
     }
 
     /// Renders the full declaration of this type for the identifier `name`.
@@ -858,5 +885,16 @@ mod tests {
         // incomplete (flexible) array
         let t = Type::array(Type::base(Int), None);
         assert_eq!(t.declarator("data"), "int data[]");
+    }
+
+    #[test]
+    fn raw_type() {
+        let t = Type::raw("_Atomic(int)");
+        assert_eq!(t.declarator("counter"), "_Atomic(int) counter");
+        assert_eq!(t.to_string(), "_Atomic(int)"); // abstract declarator
+
+        // behaves like a base type: a pointer to a raw type still works
+        let p = Type::ptr(Type::raw("__m128"));
+        assert_eq!(p.declarator("v"), "__m128 *v");
     }
 }

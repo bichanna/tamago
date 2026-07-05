@@ -27,7 +27,7 @@
 
 use std::fmt::{self, Write};
 
-use crate::{Attribute, DocComment, Expr, Format, Formatter, Type, declare, format_attrs};
+use crate::{Attribute, DocComment, Expr, Format, Formatter, Type, declare, format_annotations};
 use tamacro::DisplayFromFormat;
 
 /// Represents a C variable with its properties and attributes.
@@ -71,6 +71,9 @@ pub struct Variable {
 
     /// The attributes applied to the variable (e.g. `aligned`, `section`, `used`)
     pub attrs: Vec<Attribute>,
+
+    /// Raw macro/specifier tokens emitted verbatim at the leading annotation slot.
+    pub raw_attrs: Vec<String>,
 
     /// The optional documentation comment for the variable
     pub doc: Option<DocComment>,
@@ -126,7 +129,7 @@ impl Format for Variable {
             doc.format(fmt)?;
         }
 
-        let attrs = format_attrs(&self.attrs, fmt.attr_style());
+        let attrs = format_annotations(&self.raw_attrs, &self.attrs, fmt.attr_style());
         if !attrs.is_empty() {
             write!(fmt, "{attrs} ")?;
         }
@@ -163,6 +166,7 @@ pub struct VariableBuilder {
     is_static: bool,
     is_extern: bool,
     attrs: Vec<Attribute>,
+    raw_attrs: Vec<String>,
     doc: Option<DocComment>,
 }
 
@@ -191,6 +195,7 @@ impl VariableBuilder {
             is_static: false,
             is_extern: false,
             attrs: vec![],
+            raw_attrs: vec![],
             doc: None,
         }
     }
@@ -352,6 +357,19 @@ impl VariableBuilder {
         self
     }
 
+    /// Adds a raw macro/specifier token emitted verbatim at the leading
+    /// annotation slot (like a thread-local or export macro)
+    pub fn raw_attr(mut self, token: &str) -> Self {
+        self.raw_attrs.push(token.to_string());
+        self
+    }
+
+    /// Replaces the variable's raw annotation tokens.
+    pub fn raw_attrs(mut self, tokens: Vec<String>) -> Self {
+        self.raw_attrs = tokens;
+        self
+    }
+
     pub fn build(self) -> Variable {
         Variable {
             name: self.name,
@@ -360,6 +378,7 @@ impl VariableBuilder {
             is_static: self.is_static,
             is_extern: self.is_extern,
             attrs: self.attrs,
+            raw_attrs: self.raw_attrs,
             doc: self.doc,
         }
     }

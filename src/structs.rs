@@ -32,7 +32,9 @@
 
 use std::fmt::{self, Write};
 
-use crate::{Attribute, BaseType, DocComment, Format, Formatter, Type, declare, format_attrs};
+use crate::{
+    Attribute, BaseType, DocComment, Format, Formatter, Type, declare, format_annotations,
+};
 use tamacro::DisplayFromFormat;
 
 /// Whether an inline anonymous aggregate member is a `struct` or a `union`.
@@ -114,6 +116,9 @@ pub struct Struct {
     /// The attributes applied to the struct (e.g. `packed`, `aligned`)
     attrs: Vec<Attribute>,
 
+    /// Raw macro/specifier tokens emitted verbatim after the `struct` keyword.
+    raw_attrs: Vec<String>,
+
     /// The doc comment of the struct
     doc: Option<DocComment>,
 }
@@ -176,7 +181,7 @@ impl Format for Struct {
 
         write!(fmt, "struct")?;
 
-        let attrs = format_attrs(&self.attrs, fmt.attr_style());
+        let attrs = format_annotations(&self.raw_attrs, &self.attrs, fmt.attr_style());
         if !attrs.is_empty() {
             write!(fmt, " {attrs}")?;
         }
@@ -204,6 +209,7 @@ pub struct StructBuilder {
     name: String,
     fields: Vec<Field>,
     attrs: Vec<Attribute>,
+    raw_attrs: Vec<String>,
     doc: Option<DocComment>,
 }
 
@@ -230,6 +236,7 @@ impl StructBuilder {
             name,
             fields: vec![],
             attrs: vec![],
+            raw_attrs: vec![],
             doc: None,
         }
     }
@@ -332,6 +339,19 @@ impl StructBuilder {
         self
     }
 
+    /// Adds a raw macro/specifier token emitted verbatim after the `struct`
+    /// keyword (e.g. a `MYLANG_PACKED` macro).
+    pub fn raw_attr(mut self, token: &str) -> Self {
+        self.raw_attrs.push(token.to_string());
+        self
+    }
+
+    /// Replaces the struct's raw annotation tokens.
+    pub fn raw_attrs(mut self, tokens: Vec<String>) -> Self {
+        self.raw_attrs = tokens;
+        self
+    }
+
     /// Consumes the builder and returns a `Struct` containing all the fields.
     ///
     /// # Returns
@@ -341,6 +361,7 @@ impl StructBuilder {
             name: self.name,
             fields: self.fields,
             attrs: self.attrs,
+            raw_attrs: self.raw_attrs,
             doc: self.doc,
         }
     }
@@ -369,6 +390,9 @@ pub struct Field {
 
     /// The attributes applied to the field (e.g. `aligned`, `deprecated`)
     pub attrs: Vec<Attribute>,
+
+    /// Raw macro/specifier tokens emitted verbatim after the declarator.
+    pub raw_attrs: Vec<String>,
 
     /// The doc comment
     pub doc: Option<DocComment>,
@@ -481,7 +505,7 @@ impl Format for Field {
             }
         }
 
-        let attrs = format_attrs(&self.attrs, fmt.attr_style());
+        let attrs = format_annotations(&self.raw_attrs, &self.attrs, fmt.attr_style());
         if !attrs.is_empty() {
             write!(fmt, " {attrs}")?;
         }
@@ -500,6 +524,7 @@ pub struct FieldBuilder {
     anon: Option<AnonAggregate>,
     width: Option<u8>,
     attrs: Vec<Attribute>,
+    raw_attrs: Vec<String>,
     doc: Option<DocComment>,
 }
 
@@ -529,6 +554,7 @@ impl FieldBuilder {
             anon: None,
             width: None,
             attrs: vec![],
+            raw_attrs: vec![],
             doc: None,
         }
     }
@@ -542,6 +568,7 @@ impl FieldBuilder {
             anon: Some(AnonAggregate { kind, fields }),
             width: None,
             attrs: vec![],
+            raw_attrs: vec![],
             doc: None,
         }
     }
@@ -632,6 +659,18 @@ impl FieldBuilder {
         self
     }
 
+    /// Adds a raw macro/specifier token emitted verbatim after the declarator.
+    pub fn raw_attr(mut self, token: &str) -> Self {
+        self.raw_attrs.push(token.to_string());
+        self
+    }
+
+    /// Replaces the field's raw annotation tokens.
+    pub fn raw_attrs(mut self, tokens: Vec<String>) -> Self {
+        self.raw_attrs = tokens;
+        self
+    }
+
     /// Consumes the builder and returns a `Field` containing all the information.
     ///
     /// # Returns
@@ -655,6 +694,7 @@ impl FieldBuilder {
             anon: self.anon,
             width: self.width,
             attrs: self.attrs,
+            raw_attrs: self.raw_attrs,
             doc: self.doc,
         }
     }
@@ -775,5 +815,32 @@ char some_field;
 };
 "#;
         assert_eq!(c23, expected);
+    }
+
+    #[test]
+    fn raw_annotations() {
+        let s = StructBuilder::new_with_str("Regs")
+            .raw_attr("MYLANG_PACKED")
+            .field(
+                FieldBuilder::new_with_str("flags", Type::new(BaseType::UInt32).build())
+                    .raw_attr("MYLANG_ALIGN4")
+                    .build(),
+            )
+            .build();
+        let res = r#"struct MYLANG_PACKED Regs {
+  uint32_t flags MYLANG_ALIGN4;
+};
+"#;
+        assert_eq!(s.to_string(), res);
+
+        // raw tokens precede a typed attribute group in the same slot
+        let s2 = StructBuilder::new_with_str("S")
+            .raw_attr("MYLANG_PACKED")
+            .attr(Attribute::aligned(8))
+            .build();
+        assert_eq!(
+            s2.to_string(),
+            "struct MYLANG_PACKED __attribute__((aligned(8))) S;\n"
+        );
     }
 }

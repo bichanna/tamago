@@ -27,7 +27,7 @@
 use std::fmt::{self, Write};
 
 use crate::{
-    Attribute, Block, DocComment, Format, Formatter, Statement, Type, declare, format_attrs,
+    Attribute, Block, DocComment, Format, Formatter, Statement, Type, declare, format_annotations,
 };
 use tamacro::DisplayFromFormat;
 
@@ -83,6 +83,10 @@ pub struct Function {
 
     /// The attributes applied to the function (e.g. `noreturn`, `always_inline`)
     pub attrs: Vec<Attribute>,
+
+    /// Raw macro/specifier tokens emitted verbatim at the leading annotation slot
+    /// (e.g. an export macro like `MYLANG_API`, or `__declspec(dllexport)`).
+    pub raw_attrs: Vec<String>,
 
     /// The optional documentation comment for the function
     pub doc: Option<DocComment>,
@@ -157,7 +161,7 @@ impl Format for Function {
             doc.format(fmt)?;
         }
 
-        let attrs = format_attrs(&self.attrs, fmt.attr_style());
+        let attrs = format_annotations(&self.raw_attrs, &self.attrs, fmt.attr_style());
         if !attrs.is_empty() {
             write!(fmt, "{attrs} ")?;
         }
@@ -213,6 +217,7 @@ pub struct FunctionBuilder {
     is_extern: bool,
     body: Option<Block>,
     attrs: Vec<Attribute>,
+    raw_attrs: Vec<String>,
     doc: Option<DocComment>,
 }
 
@@ -243,6 +248,7 @@ impl FunctionBuilder {
             is_extern: false,
             body: None,
             attrs: vec![],
+            raw_attrs: vec![],
             doc: None,
         }
     }
@@ -520,6 +526,20 @@ impl FunctionBuilder {
         self
     }
 
+    /// Adds a raw macro/specifier token emitted verbatim at the leading
+    /// annotation slot, e.g. `.raw_attr("MYLANG_API")` or
+    /// `.raw_attr("__declspec(dllexport)")`.
+    pub fn raw_attr(mut self, token: &str) -> Self {
+        self.raw_attrs.push(token.to_string());
+        self
+    }
+
+    /// Replaces the function's raw annotation tokens.
+    pub fn raw_attrs(mut self, tokens: Vec<String>) -> Self {
+        self.raw_attrs = tokens;
+        self
+    }
+
     pub fn build(self) -> Function {
         Function {
             name: self.name,
@@ -530,6 +550,7 @@ impl FunctionBuilder {
             is_extern: self.is_extern,
             body: self.body,
             attrs: self.attrs,
+            raw_attrs: self.raw_attrs,
             doc: self.doc,
         }
     }
@@ -549,6 +570,9 @@ pub struct Parameter {
 
     /// The attributes applied to the parameter (e.g. `unused`)
     pub attrs: Vec<Attribute>,
+
+    /// Raw macro/specifier tokens emitted verbatim before the parameter.
+    pub raw_attrs: Vec<String>,
 }
 
 impl Parameter {
@@ -582,6 +606,7 @@ pub struct ParameterBuilder {
     name: String,
     t: Type,
     attrs: Vec<Attribute>,
+    raw_attrs: Vec<String>,
 }
 
 impl ParameterBuilder {
@@ -606,6 +631,7 @@ impl ParameterBuilder {
             name,
             t,
             attrs: vec![],
+            raw_attrs: vec![],
         }
     }
 
@@ -662,11 +688,24 @@ impl ParameterBuilder {
         self
     }
 
+    /// Adds a raw macro/specifier token emitted verbatim before the parameter.
+    pub fn raw_attr(mut self, token: &str) -> Self {
+        self.raw_attrs.push(token.to_string());
+        self
+    }
+
+    /// Replaces the parameter's raw annotation tokens.
+    pub fn raw_attrs(mut self, tokens: Vec<String>) -> Self {
+        self.raw_attrs = tokens;
+        self
+    }
+
     pub fn build(self) -> Parameter {
         Parameter {
             name: self.name,
             t: self.t,
             attrs: self.attrs,
+            raw_attrs: self.raw_attrs,
         }
     }
 }
@@ -681,7 +720,7 @@ impl Parameter {
     /// Renders this parameter including any leading attributes, in the given
     /// style, e.g. `__attribute__((unused)) int x`.
     pub fn render(&self, style: crate::AttrStyle) -> String {
-        let attrs = format_attrs(&self.attrs, style);
+        let attrs = format_annotations(&self.raw_attrs, &self.attrs, style);
         if attrs.is_empty() {
             self.declarator()
         } else {

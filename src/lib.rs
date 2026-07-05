@@ -45,6 +45,7 @@
 //! - `module`: Splits a translation unit into a matching header (`.h`) and source (`.c`) pair.
 //! - `ident`: Identifier hygiene — sanitizing names, C keyword checks, and fresh-name generation.
 //! - `attribute`: GNU/C23 attributes (`packed`, `noreturn`, `aligned`, ...) for items.
+//! - `static_assert`: `_Static_assert`/`static_assert` compile-time assertions.
 //! - `block`: Manages blocks of code within functions and control structures.
 //! - `comment`: Supports adding inline and documentation comments.
 //! - `expr`: Handles C expressions and operations.
@@ -89,18 +90,19 @@ mod loops;
 mod module;
 mod preprocessor;
 mod scope;
+mod static_assert;
 mod structs;
 mod typedef;
 mod types;
 mod union;
 mod variable;
 
-pub use attribute::{Attribute, format_attrs};
+pub use attribute::{Attribute, format_annotations, format_attrs};
 pub use block::{Block, BlockBuilder, Statement};
 pub use comment::{Comment, CommentBuilder, DocComment, DocCommentBuilder};
 pub use conditional::{If, IfBuilder, Switch, SwitchBuilder};
 pub use enums::{Enum, EnumBuilder, Variant, VariantBuilder};
-pub use expr::{AssignOp, BinOp, Expr, UnaryOp};
+pub use expr::{AssignOp, BinOp, Expr, IntBase, IntSuffix, UnaryOp};
 pub use formatter::{AttrStyle, Format, Formatter, RenderOptions, SourceLoc, render};
 pub use function::{Function, FunctionBuilder, Parameter, ParameterBuilder};
 pub use ident::{C_KEYWORDS, Gensym, is_c_keyword, sanitize_ident};
@@ -113,6 +115,7 @@ pub use preprocessor::{
     WarningDirective, WarningDirectiveBuilder,
 };
 pub use scope::{GlobalStatement, Scope, ScopeBuilder};
+pub use static_assert::StaticAssert;
 pub use structs::{AggregateKind, AnonAggregate, Field, FieldBuilder, Struct, StructBuilder};
 pub use typedef::{TypeDef, TypeDefBuilder};
 pub use types::{BaseType, Type, TypeBuilder, TypeQualifier, declare};
