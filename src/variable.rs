@@ -27,7 +27,7 @@
 
 use std::fmt::{self, Write};
 
-use crate::{DocComment, Expr, Format, Formatter, Type, declare};
+use crate::{Attribute, DocComment, Expr, Format, Formatter, Type, declare, format_attrs};
 use tamacro::DisplayFromFormat;
 
 /// Represents a C variable with its properties and attributes.
@@ -68,6 +68,9 @@ pub struct Variable {
 
     /// Whether the variable is declared with the `extern` keyword
     pub is_extern: bool,
+
+    /// The attributes applied to the variable (e.g. `aligned`, `section`, `used`)
+    pub attrs: Vec<Attribute>,
 
     /// The optional documentation comment for the variable
     pub doc: Option<DocComment>,
@@ -123,6 +126,11 @@ impl Format for Variable {
             doc.format(fmt)?;
         }
 
+        let attrs = format_attrs(&self.attrs, fmt.attr_style());
+        if !attrs.is_empty() {
+            write!(fmt, "{attrs} ")?;
+        }
+
         if self.is_extern {
             write!(fmt, "extern ")?;
         }
@@ -154,6 +162,7 @@ pub struct VariableBuilder {
     value: Option<Expr>,
     is_static: bool,
     is_extern: bool,
+    attrs: Vec<Attribute>,
     doc: Option<DocComment>,
 }
 
@@ -181,6 +190,7 @@ impl VariableBuilder {
             value: None,
             is_static: false,
             is_extern: false,
+            attrs: vec![],
             doc: None,
         }
     }
@@ -327,6 +337,21 @@ impl VariableBuilder {
     ///     .build();
     /// assert_eq!(var.to_string(), "int id = 42");
     /// ```
+    /// Adds a single attribute (e.g. [`Attribute::aligned`]) to the variable.
+    ///
+    /// Variable attributes are emitted at the front of the declaration, e.g.
+    /// `__attribute__((aligned(16))) static int buf;`.
+    pub fn attr(mut self, attr: Attribute) -> Self {
+        self.attrs.push(attr);
+        self
+    }
+
+    /// Replaces the variable's attribute list.
+    pub fn attrs(mut self, attrs: Vec<Attribute>) -> Self {
+        self.attrs = attrs;
+        self
+    }
+
     pub fn build(self) -> Variable {
         Variable {
             name: self.name,
@@ -334,6 +359,7 @@ impl VariableBuilder {
             value: self.value,
             is_static: self.is_static,
             is_extern: self.is_extern,
+            attrs: self.attrs,
             doc: self.doc,
         }
     }

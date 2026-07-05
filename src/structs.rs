@@ -28,8 +28,52 @@
 
 use std::fmt::{self, Write};
 
-use crate::{BaseType, DocComment, Format, Formatter, Type, declare};
+use crate::{Attribute, BaseType, DocComment, Format, Formatter, Type, declare, format_attrs};
 use tamacro::DisplayFromFormat;
+
+/// Whether an inline anonymous aggregate member is a `struct` or a `union`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AggregateKind {
+    /// An inline `struct { ... }`.
+    Struct,
+
+    /// An inline `union { ... }`.
+    Union,
+}
+
+impl AggregateKind {
+    fn keyword(self) -> &'static str {
+        match self {
+            AggregateKind::Struct => "struct",
+            AggregateKind::Union => "union",
+        }
+    }
+}
+
+/// An inline anonymous aggregate used as the "type" of a [`Field`].
+///
+/// This is how C11 anonymous structs and unions are modeled: a field whose
+/// contents are an inline aggregate rather than a named type. When the field
+/// also has no name, its members are injected into the enclosing aggregate's
+/// scope — exactly what you want for lowering tagged unions:
+///
+/// ```c
+/// struct Value {
+///   Tag tag;
+///   union {   // anonymous: write v.i, not v.payload.i
+///     int i;
+///     double d;
+///   };
+/// };
+/// ```
+#[derive(Debug, Clone)]
+pub struct AnonAggregate {
+    /// Whether this is a `struct` or a `union`.
+    pub kind: AggregateKind,
+
+    /// The members of the inline aggregate.
+    pub fields: Vec<Field>,
+}
 
 /// Represents a struct in C.
 ///
@@ -62,6 +106,9 @@ pub struct Struct {
 
     /// The fields of the struct
     fields: Vec<Field>,
+
+    /// The attributes applied to the struct (e.g. `packed`, `aligned`)
+    attrs: Vec<Attribute>,
 
     /// The doc comment of the struct
     doc: Option<DocComment>,
@@ -123,7 +170,14 @@ impl Format for Struct {
             doc.format(fmt)?;
         }
 
-        write!(fmt, "struct {}", self.name)?;
+        write!(fmt, "struct")?;
+
+        let attrs = format_attrs(&self.attrs, fmt.attr_style());
+        if !attrs.is_empty() {
+            write!(fmt, " {attrs}")?;
+        }
+
+        write!(fmt, " {}", self.name)?;
 
         if !self.fields.is_empty() {
             fmt.block(|fmt| {
@@ -145,6 +199,7 @@ impl Format for Struct {
 pub struct StructBuilder {
     name: String,
     fields: Vec<Field>,
+    attrs: Vec<Attribute>,
     doc: Option<DocComment>,
 }
 
@@ -170,6 +225,7 @@ impl StructBuilder {
         Self {
             name,
             fields: vec![],
+            attrs: vec![],
             doc: None,
         }
     }
@@ -257,6 +313,21 @@ impl StructBuilder {
         self
     }
 
+    /// Adds a single attribute (e.g. [`Attribute::packed`]) to the struct.
+    ///
+    /// Struct attributes are emitted right after the `struct` keyword, e.g.
+    /// `struct __attribute__((packed)) Name { ... };`.
+    pub fn attr(mut self, attr: Attribute) -> Self {
+        self.attrs.push(attr);
+        self
+    }
+
+    /// Replaces the struct's attribute list.
+    pub fn attrs(mut self, attrs: Vec<Attribute>) -> Self {
+        self.attrs = attrs;
+        self
+    }
+
     /// Consumes the builder and returns a `Struct` containing all the fields.
     ///
     /// # Returns
@@ -265,6 +336,7 @@ impl StructBuilder {
         Struct {
             name: self.name,
             fields: self.fields,
+            attrs: self.attrs,
             doc: self.doc,
         }
     }
@@ -277,14 +349,22 @@ impl StructBuilder {
 /// and documentation.
 #[derive(Debug, Clone, DisplayFromFormat)]
 pub struct Field {
-    /// The name of the field
-    pub name: String,
+    /// The name of the field, or `None` for an anonymous member (an anonymous
+    /// struct/union, or an unnamed bitfield used for padding).
+    pub name: Option<String>,
 
-    /// The type of the field
+    /// The type of the field. Ignored when [`anon`](Field::anon) is `Some`.
     pub t: Type,
+
+    /// When `Some`, the field *is* an inline anonymous aggregate (C11) rather
+    /// than a field of a named type; [`t`](Field::t) is then unused.
+    pub anon: Option<AnonAggregate>,
 
     /// The number of bits in the bitfield, if this is a bitfield
     pub width: Option<u8>,
+
+    /// The attributes applied to the field (e.g. `aligned`, `deprecated`)
+    pub attrs: Vec<Attribute>,
 
     /// The doc comment
     pub doc: Option<DocComment>,
@@ -312,6 +392,40 @@ impl Field {
         FieldBuilder::new(name, t)
     }
 
+    /// Creates a builder for an inline anonymous `struct` member (C11).
+    ///
+    /// With no name, the members are injected into the enclosing aggregate's
+    /// scope. Give it a name with [`FieldBuilder::member_name`] to instead
+    /// produce a named inline aggregate (`struct { ... } name;`).
+    ///
+    /// # Examples
+    /// ```rust
+    /// let anon = Field::anonymous_struct(vec![
+    ///     FieldBuilder::new_with_str("x", Type::new(BaseType::Int).build()).build(),
+    ///     FieldBuilder::new_with_str("y", Type::new(BaseType::Int).build()).build(),
+    /// ])
+    /// .build();
+    /// ```
+    pub fn anonymous_struct(fields: Vec<Field>) -> FieldBuilder {
+        FieldBuilder::anonymous(AggregateKind::Struct, fields)
+    }
+
+    /// Creates a builder for an inline anonymous `union` member (C11).
+    ///
+    /// This is the workhorse for tagged-union / sum-type lowering.
+    ///
+    /// # Examples
+    /// ```rust
+    /// let payload = Field::anonymous_union(vec![
+    ///     FieldBuilder::new_with_str("i", Type::new(BaseType::Int).build()).build(),
+    ///     FieldBuilder::new_with_str("d", Type::new(BaseType::Double).build()).build(),
+    /// ])
+    /// .build();
+    /// ```
+    pub fn anonymous_union(fields: Vec<Field>) -> FieldBuilder {
+        FieldBuilder::anonymous(AggregateKind::Union, fields)
+    }
+
     /// Returns the type of the field.
     ///
     /// # Returns
@@ -336,10 +450,36 @@ impl Format for Field {
             doc.format(fmt)?;
         }
 
-        write!(fmt, "{}", declare(&self.t, &self.name))?;
+        match &self.anon {
+            None => {
+                write!(
+                    fmt,
+                    "{}",
+                    declare(&self.t, self.name.as_deref().unwrap_or(""))
+                )?;
 
-        if let Some(w) = self.width {
-            write!(fmt, " : {w}")?;
+                if let Some(w) = self.width {
+                    write!(fmt, " : {w}")?;
+                }
+            }
+            Some(agg) => {
+                write!(fmt, "{}", agg.kind.keyword())?;
+                fmt.block(|fmt| {
+                    for field in &agg.fields {
+                        field.format(fmt)?;
+                    }
+                    Ok(())
+                })?;
+
+                if let Some(name) = &self.name {
+                    write!(fmt, " {name}")?;
+                }
+            }
+        }
+
+        let attrs = format_attrs(&self.attrs, fmt.attr_style());
+        if !attrs.is_empty() {
+            write!(fmt, " {attrs}")?;
         }
 
         writeln!(fmt, ";")
@@ -351,9 +491,11 @@ impl Format for Field {
 /// This builder implements the builder pattern for creating struct
 /// field definitions with a fluent interface.
 pub struct FieldBuilder {
-    name: String,
+    name: Option<String>,
     t: Type,
+    anon: Option<AnonAggregate>,
     width: Option<u8>,
+    attrs: Vec<Attribute>,
     doc: Option<DocComment>,
 }
 
@@ -378,9 +520,24 @@ impl FieldBuilder {
     /// ```
     pub fn new(name: String, t: Type) -> Self {
         Self {
-            name,
+            name: Some(name),
             t,
+            anon: None,
             width: None,
+            attrs: vec![],
+            doc: None,
+        }
+    }
+
+    /// Creates a builder for an inline anonymous aggregate member. Prefer the
+    /// [`Field::anonymous_struct`] / [`Field::anonymous_union`] entry points.
+    pub fn anonymous(kind: AggregateKind, fields: Vec<Field>) -> Self {
+        Self {
+            name: None,
+            t: Type::new(BaseType::Void).build(),
+            anon: Some(AnonAggregate { kind, fields }),
+            width: None,
+            attrs: vec![],
             doc: None,
         }
     }
@@ -448,6 +605,29 @@ impl FieldBuilder {
         self
     }
 
+    /// Gives an inline anonymous aggregate a member name, turning
+    /// `struct { ... };` into `struct { ... } name;`. Also usable to (re)name any
+    /// field.
+    pub fn member_name(mut self, name: &str) -> Self {
+        self.name = Some(name.to_string());
+        self
+    }
+
+    /// Adds a single attribute (e.g. [`Attribute::aligned`]) to the field.
+    ///
+    /// Field attributes are emitted after the declarator (and bitfield width),
+    /// e.g. `int x __attribute__((aligned(8)));`.
+    pub fn attr(mut self, attr: Attribute) -> Self {
+        self.attrs.push(attr);
+        self
+    }
+
+    /// Replaces the field's attribute list.
+    pub fn attrs(mut self, attrs: Vec<Attribute>) -> Self {
+        self.attrs = attrs;
+        self
+    }
+
     /// Consumes the builder and returns a `Field` containing all the information.
     ///
     /// # Returns
@@ -468,7 +648,9 @@ impl FieldBuilder {
         Field {
             name: self.name,
             t: self.t,
+            anon: self.anon,
             width: self.width,
+            attrs: self.attrs,
             doc: self.doc,
         }
     }
@@ -517,5 +699,77 @@ char some_field;
 "#;
 
         assert_eq!(s.to_string(), res);
+    }
+
+    #[test]
+    fn anonymous_union_member() {
+        // tagged union
+        let s = StructBuilder::new_with_str("Value")
+            .field(FieldBuilder::new_with_str("tag", Type::new(BaseType::Int).build()).build())
+            .field(
+                Field::anonymous_union(vec![
+                    FieldBuilder::new_with_str("i", Type::new(BaseType::Int).build()).build(),
+                    FieldBuilder::new_with_str("d", Type::new(BaseType::Double).build()).build(),
+                ])
+                .build(),
+            )
+            .build();
+        let res = r#"struct Value {
+  int tag;
+  union {
+    int i;
+    double d;
+  };
+};
+"#;
+        assert_eq!(s.to_string(), res);
+    }
+
+    #[test]
+    fn named_inline_aggregate() {
+        // struct { int x; int y; } point;
+        let f = Field::anonymous_struct(vec![
+            FieldBuilder::new_with_str("x", Type::new(BaseType::Int).build()).build(),
+            FieldBuilder::new_with_str("y", Type::new(BaseType::Int).build()).build(),
+        ])
+        .member_name("point")
+        .build();
+        let res = r#"struct {
+  int x;
+  int y;
+} point;
+"#;
+        assert_eq!(f.to_string(), res);
+    }
+
+    #[test]
+    fn struct_and_field_attributes() {
+        let s = StructBuilder::new_with_str("Header")
+            .attr(Attribute::packed())
+            .field(
+                FieldBuilder::new_with_str("magic", Type::new(BaseType::UInt32).build())
+                    .attr(Attribute::aligned(4))
+                    .build(),
+            )
+            .build();
+        let res = r#"struct __attribute__((packed)) Header {
+  uint32_t magic __attribute__((aligned(4)));
+};
+"#;
+        assert_eq!(s.to_string(), res);
+
+        // same struct rendered in C23 attribute style
+        let c23 = render(
+            &s,
+            RenderOptions {
+                attr_style: AttrStyle::C23,
+                ..Default::default()
+            },
+        );
+        let expected = r#"struct [[gnu::packed]] Header {
+  uint32_t magic [[gnu::aligned(4)]];
+};
+"#;
+        assert_eq!(c23, expected);
     }
 }

@@ -29,6 +29,77 @@ pub trait Format {
     fn format(&self, fmt: &mut Formatter<'_>) -> fmt::Result;
 }
 
+/// A source location used for `#line` mapping: a file path and a 1-based line
+/// number in the *original* (pre-generation) source
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceLoc {
+    /// The originating source file.
+    pub file: String,
+
+    /// The 1-based line number within that file.
+    pub line: u64,
+}
+
+impl SourceLoc {
+    /// Creates a new source location.
+    pub fn new(file: impl Into<String>, line: u64) -> Self {
+        Self {
+            file: file.into(),
+            line,
+        }
+    }
+}
+
+/// The spelling style used when emitting attributes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AttrStyle {
+    /// GNU style, e.g. `__attribute__((packed))`. This is the default for nwo.
+    #[default]
+    Gnu,
+
+    /// C23 bracket style, e.g. `[[gnu::packed]]`.
+    C23,
+}
+
+/// Options that control how code is rendered. Use with [`render`] or
+/// [`Formatter::with_options`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RenderOptions {
+    /// When `true`, located items and statements emit `#line N "file"`
+    /// directives whenever the source location changes.
+    pub line_directives: bool,
+
+    /// The attribute spelling style.
+    pub attr_style: AttrStyle,
+}
+
+/// Renders any [`Format`] value to a `String` using the given [`RenderOptions`].
+///
+/// This is the entry point for opt-in features such as `#line` directives and
+/// the C23 attribute style; the plain `to_string()` path always uses the
+/// defaults (GNU attributes, no line directives).
+pub fn render<T: Format>(item: &T, opts: RenderOptions) -> String {
+    let mut dst = String::new();
+    let mut fmt = Formatter::with_options(&mut dst, opts);
+    // Writing into a String is infallible, so the result is safe to discard.
+    let _ = item.format(&mut fmt);
+    dst
+}
+
+/// Escapes a string for inclusion inside a C string literal (used for the file
+/// path in `#line` directives).
+fn escape_c_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 /// Formatter for a scope
 #[derive(Debug)]
 pub struct Formatter<'a> {
@@ -43,6 +114,12 @@ pub struct Formatter<'a> {
 
     /// Indentation level
     pub indent: usize,
+
+    /// Rendering options (attribute style, whether to emit `#line`).
+    opts: RenderOptions,
+
+    /// The most recently emitted source location, for `#line` de-duplication.
+    last_loc: Option<SourceLoc>,
 }
 
 impl<'a> Formatter<'a> {
@@ -52,7 +129,57 @@ impl<'a> Formatter<'a> {
             spaces: 0,
             scope: vec![],
             indent: DEFAULT_INDENT,
+            opts: RenderOptions::default(),
+            last_loc: None,
         }
+    }
+
+    /// Creates a formatter with explicit [`RenderOptions`].
+    pub fn with_options(dst: &'a mut String, opts: RenderOptions) -> Self {
+        Self {
+            dst,
+            spaces: 0,
+            scope: vec![],
+            indent: DEFAULT_INDENT,
+            opts,
+            last_loc: None,
+        }
+    }
+
+    /// Returns the attribute spelling style in effect.
+    pub fn attr_style(&self) -> AttrStyle {
+        self.opts.attr_style
+    }
+
+    /// Returns whether `#line` directives are being emitted
+    pub fn line_directives_enabled(&self) -> bool {
+        self.opts.line_directives
+    }
+
+    /// Emits a `#line N "file"` directive if line directives are enabled and the
+    /// location differs from the last one emitted, and otherwise, it does nothing.
+    ///
+    /// Located items and statements call this before emitting their content, so
+    /// that the C compiler and any debugger map the following code back to the
+    /// original source.
+    pub fn sync_line(&mut self, loc: &SourceLoc) -> fmt::Result {
+        if !self.opts.line_directives {
+            return Ok(());
+        }
+        if self.last_loc.as_ref() == Some(loc) {
+            return Ok(());
+        }
+        if !self.is_start_of_line() {
+            writeln!(self)?;
+        }
+        writeln!(
+            self,
+            "#line {} \"{}\"",
+            loc.line,
+            escape_c_string(&loc.file)
+        )?;
+        self.last_loc = Some(loc.clone());
+        Ok(())
     }
 
     pub fn scope<F, R>(&mut self, name: &str, f: F) -> R

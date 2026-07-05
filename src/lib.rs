@@ -75,6 +75,7 @@
 //! ```
 //!
 
+mod attribute;
 mod block;
 mod comment;
 mod conditional;
@@ -93,12 +94,13 @@ mod types;
 mod union;
 mod variable;
 
+pub use attribute::{Attribute, format_attrs};
 pub use block::{Block, BlockBuilder, Statement};
 pub use comment::{Comment, CommentBuilder, DocComment, DocCommentBuilder};
 pub use conditional::{If, IfBuilder, Switch, SwitchBuilder};
 pub use enums::{Enum, EnumBuilder, Variant, VariantBuilder};
 pub use expr::{AssignOp, BinOp, Expr, UnaryOp};
-pub use formatter::{Format, Formatter};
+pub use formatter::{AttrStyle, Format, Formatter, RenderOptions, SourceLoc, render};
 pub use function::{Function, FunctionBuilder, Parameter, ParameterBuilder};
 pub use ident::{C_KEYWORDS, Gensym, is_c_keyword, sanitize_ident};
 pub use loops::{DoWhile, DoWhileBuilder, For, ForBuilder, While, WhileBuilder};
@@ -110,7 +112,7 @@ pub use preprocessor::{
     WarningDirective, WarningDirectiveBuilder,
 };
 pub use scope::{GlobalStatement, Scope, ScopeBuilder};
-pub use structs::{Field, FieldBuilder, Struct, StructBuilder};
+pub use structs::{AggregateKind, AnonAggregate, Field, FieldBuilder, Struct, StructBuilder};
 pub use typedef::{TypeDef, TypeDefBuilder};
 pub use types::{BaseType, Type, TypeBuilder, TypeQualifier, declare};
 pub use union::{Union, UnionBuilder};

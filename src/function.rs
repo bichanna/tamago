@@ -26,7 +26,9 @@
 
 use std::fmt::{self, Write};
 
-use crate::{Block, DocComment, Format, Formatter, Statement, Type, declare};
+use crate::{
+    Attribute, Block, DocComment, Format, Formatter, Statement, Type, declare, format_attrs,
+};
 use tamacro::DisplayFromFormat;
 
 /// Represents a C function with all its components and attributes.
@@ -78,6 +80,9 @@ pub struct Function {
     /// The body of the function. `None` means this is a prototype (a declaration
     /// only); `Some(block)` is a definition, even when the block is empty.
     pub body: Option<Block>,
+
+    /// The attributes applied to the function (e.g. `noreturn`, `always_inline`)
+    pub attrs: Vec<Attribute>,
 
     /// The optional documentation comment for the function
     pub doc: Option<DocComment>,
@@ -152,6 +157,11 @@ impl Format for Function {
             doc.format(fmt)?;
         }
 
+        let attrs = format_attrs(&self.attrs, fmt.attr_style());
+        if !attrs.is_empty() {
+            write!(fmt, "{attrs} ")?;
+        }
+
         if self.is_extern {
             write!(fmt, "extern ")?;
         }
@@ -169,7 +179,7 @@ impl Format for Function {
         } else {
             self.params
                 .iter()
-                .map(|p| p.declarator())
+                .map(|p| p.render(fmt.attr_style()))
                 .collect::<Vec<_>>()
                 .join(", ")
         };
@@ -202,6 +212,7 @@ pub struct FunctionBuilder {
     is_static: bool,
     is_extern: bool,
     body: Option<Block>,
+    attrs: Vec<Attribute>,
     doc: Option<DocComment>,
 }
 
@@ -231,6 +242,7 @@ impl FunctionBuilder {
             is_static: false,
             is_extern: false,
             body: None,
+            attrs: vec![],
             doc: None,
         }
     }
@@ -493,6 +505,21 @@ impl FunctionBuilder {
     ///         .build())
     ///     .build();
     /// ```
+    /// Adds a single attribute (e.g. [`Attribute::noreturn`]) to the function.
+    ///
+    /// Function attributes are emitted at the front of the declaration, e.g.
+    /// `__attribute__((noreturn)) void abort_(void);`.
+    pub fn attr(mut self, attr: Attribute) -> Self {
+        self.attrs.push(attr);
+        self
+    }
+
+    /// Replaces the function's attribute list.
+    pub fn attrs(mut self, attrs: Vec<Attribute>) -> Self {
+        self.attrs = attrs;
+        self
+    }
+
     pub fn build(self) -> Function {
         Function {
             name: self.name,
@@ -502,6 +529,7 @@ impl FunctionBuilder {
             is_static: self.is_static,
             is_extern: self.is_extern,
             body: self.body,
+            attrs: self.attrs,
             doc: self.doc,
         }
     }
@@ -518,6 +546,9 @@ pub struct Parameter {
 
     /// The type of the parameter
     pub t: Type,
+
+    /// The attributes applied to the parameter (e.g. `unused`)
+    pub attrs: Vec<Attribute>,
 }
 
 impl Parameter {
@@ -550,6 +581,7 @@ impl Parameter {
 pub struct ParameterBuilder {
     name: String,
     t: Type,
+    attrs: Vec<Attribute>,
 }
 
 impl ParameterBuilder {
@@ -570,7 +602,11 @@ impl ParameterBuilder {
     /// let builder = ParameterBuilder::new("count".to_string(), Type::new(BaseType::Int).build());
     /// ```
     pub fn new(name: String, t: Type) -> Self {
-        Self { name, t }
+        Self {
+            name,
+            t,
+            attrs: vec![],
+        }
     }
 
     /// Creates and returns a new `ParameterBuilder` using a string slice for the name.
@@ -611,10 +647,26 @@ impl ParameterBuilder {
     /// let param = ParameterBuilder::new_with_str("data", Type::new(BaseType::Void).make_pointer().build())
     ///     .build();
     /// ```
+    /// Adds a single attribute (e.g. [`Attribute::unused`]) to the parameter.
+    ///
+    /// Parameter attributes are emitted at the front of the parameter, e.g.
+    /// `void f(__attribute__((unused)) int x)`.
+    pub fn attr(mut self, attr: Attribute) -> Self {
+        self.attrs.push(attr);
+        self
+    }
+
+    /// Replaces the parameter's attribute list.
+    pub fn attrs(mut self, attrs: Vec<Attribute>) -> Self {
+        self.attrs = attrs;
+        self
+    }
+
     pub fn build(self) -> Parameter {
         Parameter {
             name: self.name,
             t: self.t,
+            attrs: self.attrs,
         }
     }
 }
@@ -625,11 +677,22 @@ impl Parameter {
     pub fn declarator(&self) -> String {
         declare(&self.t, &self.name)
     }
+
+    /// Renders this parameter including any leading attributes, in the given
+    /// style, e.g. `__attribute__((unused)) int x`.
+    pub fn render(&self, style: crate::AttrStyle) -> String {
+        let attrs = format_attrs(&self.attrs, style);
+        if attrs.is_empty() {
+            self.declarator()
+        } else {
+            format!("{attrs} {}", self.declarator())
+        }
+    }
 }
 
 impl Format for Parameter {
     fn format(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
-        write!(fmt, "{}", self.declarator())
+        write!(fmt, "{}", self.render(fmt.attr_style()))
     }
 }
 

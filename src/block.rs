@@ -36,7 +36,7 @@ use std::fmt::{self, Write};
 
 use crate::{
     Comment, DoWhile, ErrorDirective, Expr, For, Format, Formatter, If, IfDefDirective,
-    IfDirective, Include, LineDirective, Macro, PragmaDirective, Switch, Variable,
+    IfDirective, Include, LineDirective, Macro, PragmaDirective, SourceLoc, Switch, Variable,
     WarningDirective, While,
 };
 use tamacro::DisplayFromFormat;
@@ -416,10 +416,39 @@ pub enum Statement {
     /// Useful for edge cases not covered by other statement types
     Raw(String),
 
+    /// A statement tagged with a source location.
+    ///
+    /// When rendered with line directives enabled (see
+    /// [`render`](crate::render) with [`RenderOptions::line_directives`](crate::RenderOptions)),
+    /// a `#line N "file"` directive is emitted before the inner statement
+    /// whenever the location changes. Otherwise it renders as the inner
+    /// statement, transparently
+    Located {
+        /// The originating source location.
+        loc: SourceLoc,
+        /// The wrapped statement.
+        stmt: Box<Statement>,
+    },
+
     /// A standalone newline for formatting purposes
     ///
     /// Adds vertical whitespace between statements for improved readability
     NewLine,
+}
+
+impl Statement {
+    /// Tags this statement with a source location for `#line` mapping.
+    ///
+    /// # Examples
+    /// ```rust
+    /// let s = Statement::Return(None).located(SourceLoc::new("main.abc", 12));
+    /// ```
+    pub fn located(self, loc: SourceLoc) -> Statement {
+        Statement::Located {
+            loc,
+            stmt: Box::new(self),
+        }
+    }
 }
 
 impl Format for Statement {
@@ -459,6 +488,10 @@ impl Format for Statement {
             PragmaDirective(p) => p.format(fmt),
             WarningDirective(w) => w.format(fmt),
             Raw(s) => writeln!(fmt, "{s}"),
+            Located { loc, stmt } => {
+                fmt.sync_line(loc)?;
+                stmt.format(fmt)
+            }
             NewLine => writeln!(fmt),
         }
     }
@@ -520,5 +553,35 @@ mod tests {
             .build();
 
         assert_eq!(b2.to_string(), "something else\nabc;\n\n\nsome_func();\n");
+    }
+
+    #[test]
+    fn located_line_directives() {
+        let block = Block::new()
+            .statement(
+                Statement::Expr(Expr::FnCall {
+                    name: Box::new(Expr::new_ident_with_str("foo")),
+                    args: vec![],
+                })
+                .located(SourceLoc::new("main.tamago", 10)),
+            )
+            .statement(Statement::Return(None).located(SourceLoc::new("main.tamago", 11)))
+            .build();
+
+        // without the line-directive mode, locations are invisible
+        assert_eq!(block.to_string(), "foo();\nreturn;\n");
+
+        // with it on, a #line is emitted whenever the location changes.
+        let out = render(
+            &block,
+            RenderOptions {
+                line_directives: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            out,
+            "#line 10 \"main.tamago\"\nfoo();\n#line 11 \"main.tamago\"\nreturn;\n"
+        );
     }
 }

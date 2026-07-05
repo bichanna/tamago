@@ -240,8 +240,28 @@ pub enum GlobalStatement {
     /// A raw piece of code inserted directly without processing.
     Raw(String),
 
+    /// A global statement tagged with a source location. When rendered with line
+    /// directives enabled, emits `#line N "file"` before the inner statement
+    /// whenever the location changes.
+    Located {
+        /// The originating source location.
+        loc: SourceLoc,
+        /// The wrapped global statement.
+        stmt: Box<GlobalStatement>,
+    },
+
     /// A new line for formatting purposes.
     NewLine,
+}
+
+impl GlobalStatement {
+    /// Tags this global statement with a source location for `#line` mapping.
+    pub fn located(self, loc: SourceLoc) -> GlobalStatement {
+        GlobalStatement::Located {
+            loc,
+            stmt: Box::new(self),
+        }
+    }
 }
 
 impl Format for GlobalStatement {
@@ -267,6 +287,10 @@ impl Format for GlobalStatement {
             PragmaDirective(p) => p.format(fmt),
             WarningDirective(w) => w.format(fmt),
             Raw(r) => writeln!(fmt, "{r}"),
+            Located { loc, stmt } => {
+                fmt.sync_line(loc)?;
+                stmt.format(fmt)
+            }
             NewLine => writeln!(fmt),
         }
     }
