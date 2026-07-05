@@ -20,6 +20,10 @@
 
 //! This module provides a formatter implementation that emits a string of C code with the right
 //! indentation.
+//!
+//! Most code is rendered simply via `to_string()`, but [`render`] with
+//! [`RenderOptions`] enables opt-in features: the [`AttrStyle`] for attributes
+//! (GNU vs C23) and `#line` directives driven by [`SourceLoc`]-tagged items
 
 use std::fmt::{self, Write};
 

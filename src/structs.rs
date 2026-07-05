@@ -24,7 +24,11 @@
 //! with their fields, documentation, and other attributes. This is particularly
 //! useful for generating C header files or FFI bindings.
 //!
-//! For now, nested anonymous structs are not supported, but this might change in the future.
+//! Fields may be ordinary typed members, bitfields, or inline C11 anonymous
+//! `struct`/`union` members (see [`Field::anonymous_union`] and
+//! [`Field::anonymous_struct`]) — the latter being how tagged unions are
+//! modeled. Structs and fields can also carry [`Attribute`]s such as `packed`
+//! and `aligned`.
 
 use std::fmt::{self, Write};
 

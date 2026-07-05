@@ -44,6 +44,7 @@
 //! - `scope`: Defines scope management for C code generation.
 //! - `module`: Splits a translation unit into a matching header (`.h`) and source (`.c`) pair.
 //! - `ident`: Identifier hygiene — sanitizing names, C keyword checks, and fresh-name generation.
+//! - `attribute`: GNU/C23 attributes (`packed`, `noreturn`, `aligned`, ...) for items.
 //! - `block`: Manages blocks of code within functions and control structures.
 //! - `comment`: Supports adding inline and documentation comments.
 //! - `expr`: Handles C expressions and operations.
