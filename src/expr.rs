@@ -247,6 +247,40 @@ pub enum Expr {
     /// Example: `sizeof(int)`
     SizeOf(Type),
 
+    /// An alignment-query expression: `_Alignof(t)` (or `alignof(t)` in C23
+    /// style).
+    ///
+    /// Example: `_Alignof(int)`
+    AlignOf(Type),
+
+    /// An `offsetof(type, member)` expression (from `<stddef.h>`).
+    ///
+    /// Example: `offsetof(struct S, field)`
+    OffsetOf {
+        /// The aggregate type.
+        t: Type,
+        /// The member whose offset is queried.
+        member: String,
+    },
+
+    /// A string literal with an optional encoding prefix, e.g. `L"wide"`,
+    /// `u8"utf8"`, `u"utf16"`, or `U"utf32"`.
+    StrLit {
+        /// The encoding prefix.
+        prefix: EncodingPrefix,
+        /// The (unescaped) string value.
+        value: String,
+    },
+
+    /// A character literal with an optional encoding prefix, e.g. `L'x'`,
+    /// `u'x'`, `U'x'`, or `u8'x'` (C23).
+    CharLit {
+        /// The encoding prefix.
+        prefix: EncodingPrefix,
+        /// The character value.
+        value: char,
+    },
+
     /// An array initialization expression.
     ///
     /// Examples:
@@ -290,6 +324,35 @@ pub enum Expr {
 
     /// A raw C expression as a string (for cases not covered by other variants).
     Raw(String),
+}
+
+/// The encoding prefix for a string or character literal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EncodingPrefix {
+    /// No prefix: `"..."` / `'x'`.
+    #[default]
+    None,
+    /// `L` — wide (`wchar_t`): `L"..."` / `L'x'`.
+    Wide,
+    /// `u8` — UTF-8: `u8"..."` (and `u8'x'` in C23).
+    Utf8,
+    /// `u` — UTF-16 (`char16_t`): `u"..."` / `u'x'`.
+    Utf16,
+    /// `U` — UTF-32 (`char32_t`): `U"..."` / `U'x'`.
+    Utf32,
+}
+
+impl EncodingPrefix {
+    /// The literal prefix text (`""`, `"L"`, `"u8"`, `"u"`, `"U"`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EncodingPrefix::None => "",
+            EncodingPrefix::Wide => "L",
+            EncodingPrefix::Utf8 => "u8",
+            EncodingPrefix::Utf16 => "u",
+            EncodingPrefix::Utf32 => "U",
+        }
+    }
 }
 
 /// The radix used to render an [`Expr::IntLit`].
@@ -653,6 +716,35 @@ impl Expr {
         Self::SizeOf(t)
     }
 
+    /// Creates an alignment-query expression, rendered `_Alignof(t)` (or
+    /// `alignof(t)` in C23 style).
+    pub fn new_alignof(t: Type) -> Self {
+        Self::AlignOf(t)
+    }
+
+    /// Creates an `offsetof(t, member)` expression.
+    pub fn new_offsetof(t: Type, member: &str) -> Self {
+        Self::OffsetOf {
+            t,
+            member: member.to_string(),
+        }
+    }
+
+    /// Creates a string literal with the given encoding prefix, e.g.
+    /// `Expr::new_str_lit(EncodingPrefix::Wide, "hi")` renders `L"hi"`.
+    pub fn new_str_lit(prefix: EncodingPrefix, value: &str) -> Self {
+        Self::StrLit {
+            prefix,
+            value: value.to_string(),
+        }
+    }
+
+    /// Creates a character literal with the given encoding prefix, e.g.
+    /// `Expr::new_char_lit(EncodingPrefix::Utf32, 'A')` renders `U'A'`.
+    pub fn new_char_lit(prefix: EncodingPrefix, value: char) -> Self {
+        Self::CharLit { prefix, value }
+    }
+
     /// Creates a new in-order array initialization expression.
     ///
     /// # Arguments
@@ -774,6 +866,10 @@ impl Expr {
             | Variable(_)
             | Parenthesized { .. }
             | SizeOf(_)
+            | AlignOf(_)
+            | OffsetOf { .. }
+            | StrLit { .. }
+            | CharLit { .. }
             | InitArr(_)
             | InitStruct(_)
             | CompoundLiteral { .. }
@@ -917,6 +1013,26 @@ impl Format for Expr {
                 write!(fmt, "sizeof(")?;
                 t.format(fmt)?;
                 write!(fmt, ")")
+            }
+            AlignOf(t) => {
+                let kw = match fmt.attr_style() {
+                    crate::AttrStyle::C23 => "alignof",
+                    crate::AttrStyle::Gnu => "_Alignof",
+                };
+                write!(fmt, "{kw}(")?;
+                t.format(fmt)?;
+                write!(fmt, ")")
+            }
+            OffsetOf { t, member } => {
+                write!(fmt, "offsetof(")?;
+                t.format(fmt)?;
+                write!(fmt, ", {member})")
+            }
+            StrLit { prefix, value } => {
+                write!(fmt, "{}\"{}\"", prefix.as_str(), escape_c_str(value))
+            }
+            CharLit { prefix, value } => {
+                write!(fmt, "{}'{}'", prefix.as_str(), escape_c_char(*value))
             }
             InitArr(v) => {
                 write!(fmt, "{{")?;
@@ -1069,13 +1185,21 @@ pub enum BinOp {
 /// and postfix operators for various operations.
 #[derive(Debug, Clone, DisplayFromConstSymbol, FormatFromConstSymbol)]
 pub enum UnaryOp {
-    /// Increment operator (`++`), can be prefix or postfix
+    /// Postfix increment operator (`x++`).
     #[symbol = "++"]
     Inc,
 
-    /// Decrement operator (`--`), can be prefix or postfix
+    /// Postfix decrement operator (`x--`).
     #[symbol = "--"]
     Dec,
+
+    /// Prefix increment operator (`++x`).
+    #[symbol = "++"]
+    PreInc,
+
+    /// Prefix decrement operator (`--x`).
+    #[symbol = "--"]
+    PreDec,
 
     /// Unary negation operator (`-`)
     #[symbol = "-"]
@@ -1312,6 +1436,66 @@ mod tests {
 
         let access = Expr::new_mem_access_with_str(cl, "x");
         assert_eq!(access.to_string(), "(Point){1, 2}.x");
+    }
+
+    #[test]
+    fn encoding_prefixed_literals() {
+        assert_eq!(
+            Expr::new_str_lit(EncodingPrefix::Wide, "hi").to_string(),
+            "L\"hi\""
+        );
+        assert_eq!(
+            Expr::new_str_lit(EncodingPrefix::Utf8, "hi").to_string(),
+            "u8\"hi\""
+        );
+        assert_eq!(
+            Expr::new_str_lit(EncodingPrefix::Utf16, "hi").to_string(),
+            "u\"hi\""
+        );
+        assert_eq!(
+            Expr::new_str_lit(EncodingPrefix::Utf32, "hi").to_string(),
+            "U\"hi\""
+        );
+        assert_eq!(
+            Expr::new_char_lit(EncodingPrefix::Wide, 'x').to_string(),
+            "L'x'"
+        );
+        assert_eq!(
+            Expr::new_str_lit(EncodingPrefix::Wide, "a\"b").to_string(),
+            "L\"a\\\"b\""
+        );
+    }
+
+    #[test]
+    fn alignof_and_offsetof() {
+        let a = Expr::new_alignof(Type::base(BaseType::Int));
+        assert_eq!(a.to_string(), "_Alignof(int)");
+        let c23 = render(
+            &a,
+            RenderOptions {
+                attr_style: AttrStyle::C23,
+                ..Default::default()
+            },
+        );
+        assert_eq!(c23, "alignof(int)");
+
+        let o = Expr::new_offsetof(Type::base(BaseType::Struct("S".to_string())), "field");
+        assert_eq!(o.to_string(), "offsetof(struct S, field)");
+    }
+
+    #[test]
+    fn prefix_and_postfix_inc_dec() {
+        let id = || Expr::new_ident_with_str("a");
+        assert_eq!(Expr::new_unary(id(), UnaryOp::Inc).to_string(), "a++");
+        assert_eq!(Expr::new_unary(id(), UnaryOp::Dec).to_string(), "a--");
+        assert_eq!(Expr::new_unary(id(), UnaryOp::PreInc).to_string(), "++a");
+        assert_eq!(Expr::new_unary(id(), UnaryOp::PreDec).to_string(), "--a");
+
+        let deref_post = Expr::new_unary(
+            Expr::new_unary(Expr::new_ident_with_str("p"), UnaryOp::Inc),
+            UnaryOp::Deref,
+        );
+        assert_eq!(deref_post.to_string(), "*p++");
     }
 
     #[test]
