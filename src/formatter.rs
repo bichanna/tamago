@@ -62,7 +62,7 @@ impl SourceLoc {
 /// The spelling style used when emitting attributes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AttrStyle {
-    /// GNU style, e.g. `__attribute__((packed))`. This is the default for nwo.
+    /// GNU style, e.g. `__attribute__((packed))`. This is the default.
     #[default]
     Gnu,
 
@@ -130,6 +130,14 @@ pub struct RenderOptions {
 
     /// The attribute spelling style.
     pub attr_style: AttrStyle,
+
+    /// When `true`, emit C23 keyword spellings for operators that have both a
+    /// classic and a C23 form — currently `alignof` instead of `_Alignof`. This
+    /// is deliberately independent of [`attr_style`](Self::attr_style): the
+    /// attribute syntax and the choice of keyword spelling are separate language
+    /// concerns (you might target C11 with GNU attributes, or C23 while keeping
+    /// `_Alignof`).
+    pub c23_keywords: bool,
 
     /// How indentation is rendered (spaces or tabs).
     pub indent: IndentStyle,
@@ -211,21 +219,7 @@ pub fn render_to_io<T: Format, W: io::Write>(
     if let Some(e) = adapter.err {
         return Err(e);
     }
-    res.map_err(|_| io::Error::new(io::ErrorKind::Other, "formatting failed"))
-}
-
-/// Escapes a string for inclusion inside a C string literal (used for the file
-/// path in `#line` directives).
-fn escape_c_string(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            _ => out.push(ch),
-        }
-    }
-    out
+    res.map_err(|_| io::Error::other("formatting failed"))
 }
 
 /// Formatter for a scope.
@@ -240,13 +234,10 @@ pub struct Formatter<'a> {
     at_line_start: bool,
 
     /// The current indentation width, in indent units (spaces or tabs).
-    pub spaces: usize,
-
-    /// The current scope
-    scope: Vec<String>,
+    spaces: usize,
 
     /// The number of indent units added per nesting level.
-    pub indent: usize,
+    indent: usize,
 
     /// The character emitted per indent unit (`' '` or `'\t'`).
     indent_unit: char,
@@ -279,7 +270,6 @@ impl<'a> Formatter<'a> {
             dst,
             at_line_start: true,
             spaces: 0,
-            scope: vec![],
             indent: opts.indent.step(),
             indent_unit: opts.indent.unit(),
             opts,
@@ -290,6 +280,25 @@ impl<'a> Formatter<'a> {
     /// Returns the attribute spelling style in effect.
     pub fn attr_style(&self) -> AttrStyle {
         self.opts.attr_style
+    }
+
+    /// Returns whether C23 keyword spellings (e.g. `alignof`) are in effect.
+    pub fn c23_keywords(&self) -> bool {
+        self.opts.c23_keywords
+    }
+
+    /// Returns the rendering options in effect.
+    ///
+    /// Useful when a sub-render has to be materialized into a `String` yet must
+    /// preserve the ambient options (see the prefix-unary path in `expr`), so
+    /// that nested option-sensitive nodes render consistently.
+    pub(crate) fn options(&self) -> RenderOptions {
+        self.opts
+    }
+
+    /// The current indentation width, in indent units (spaces or tabs).
+    pub(crate) fn current_indent(&self) -> usize {
+        self.spaces
     }
 
     /// Returns whether `#line` directives are being emitted
@@ -317,20 +326,10 @@ impl<'a> Formatter<'a> {
             self,
             "#line {} \"{}\"",
             loc.line,
-            escape_c_string(&loc.file)
+            crate::escape::escape_c_str(&loc.file)
         )?;
         self.last_loc = Some(loc.clone());
         Ok(())
-    }
-
-    pub fn scope<F, R>(&mut self, name: &str, f: F) -> R
-    where
-        F: FnOnce(&mut Self) -> R,
-    {
-        self.scope.push(name.to_string());
-        let res = f(self);
-        self.scope.pop();
-        res
     }
 
     pub fn block<F>(&mut self, f: F) -> fmt::Result

@@ -42,48 +42,9 @@
 
 use std::fmt::{self, Write};
 
-use crate::{Format, Formatter, Type, Variable};
+use crate::escape::{escape_c_char, escape_c_str};
+use crate::{Format, Formatter, Type};
 use tamacro::{DisplayFromConstSymbol, DisplayFromFormat, FormatFromConstSymbol};
-
-/// Escapes a Rust string into the body of a C string literal (no surrounding quotes).
-pub(crate) fn escape_c_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    for &b in s.as_bytes() {
-        match b {
-            b'"' => out.push_str("\\\""),
-            b'\\' => out.push_str("\\\\"),
-            b'\n' => out.push_str("\\n"),
-            b'\t' => out.push_str("\\t"),
-            b'\r' => out.push_str("\\r"),
-            0x07 => out.push_str("\\a"),
-            0x08 => out.push_str("\\b"),
-            0x0b => out.push_str("\\v"),
-            0x0c => out.push_str("\\f"),
-            0x20..=0x7e => out.push(b as char),
-            _ => out.push_str(&format!("\\{b:03o}")),
-        }
-    }
-    out
-}
-
-/// Escapes a Rust `char` into the body of a C character constant (no surrounding quotes).
-fn escape_c_char(c: char) -> String {
-    match c {
-        '\'' => "\\'".to_string(),
-        '\\' => "\\\\".to_string(),
-        '\n' => "\\n".to_string(),
-        '\t' => "\\t".to_string(),
-        '\r' => "\\r".to_string(),
-        '\0' => "\\0".to_string(),
-        '\u{07}' => "\\a".to_string(),
-        '\u{08}' => "\\b".to_string(),
-        '\u{0b}' => "\\v".to_string(),
-        '\u{0c}' => "\\f".to_string(),
-        c if (' '..='~').contains(&c) => c.to_string(),
-        c if (c as u32) <= 0xff => format!("\\{:03o}", c as u32),
-        c => format!("\\x{:x}", c as u32),
-    }
-}
 
 /// Formats an `f64` as a valid C `double` constant
 fn format_c_double(num: f64) -> String {
@@ -175,9 +136,6 @@ pub enum Expr {
 
     /// An identifier representing a variable or function name.
     Ident(String),
-
-    /// Variable declaration or definition with type information.
-    Variable(Box<Variable>),
 
     /// A binary expression combining two expressions with an operator.
     ///
@@ -811,7 +769,7 @@ impl Expr {
 }
 
 const PREC_ASSIGN: u8 = 2; // = += -= ... (right associative)
-const PREC_TERNARY: u8 = 3; // ?: (right asociative)
+const PREC_TERNARY: u8 = 3; // ?: (right associative)
 const PREC_LOGIC_OR: u8 = 4; // ||
 const PREC_LOGIC_AND: u8 = 5; // &&
 const PREC_BIT_OR: u8 = 6; // |
@@ -855,6 +813,9 @@ impl Expr {
     pub fn precedence(&self) -> u8 {
         use Expr::*;
         match self {
+            IntLit { value, .. } if *value < 0 => PREC_UNARY,
+            Int(n) if *n < 0 => PREC_UNARY,
+
             Int(_)
             | UInt(_)
             | Double(_)
@@ -863,7 +824,6 @@ impl Expr {
             | Char(_)
             | Str(_)
             | Ident(_)
-            | Variable(_)
             | Parenthesized { .. }
             | SizeOf(_)
             | AlignOf(_)
@@ -883,7 +843,7 @@ impl Expr {
             }
             Unary { op, .. } if matches!(op, UnaryOp::Inc | UnaryOp::Dec) => PREC_POSTFIX,
 
-            // Remaining unary operators are prefix und casts share their level
+            // Remaining unary operators are prefix, and casts share their level.
             Unary { .. } | Cast { .. } => PREC_UNARY,
 
             Binary { op, .. } => op.precedence(),
@@ -915,6 +875,24 @@ fn needs_separating_space(op: &str, operand: &str) -> bool {
     )
 }
 
+/// Formats `items` separated by `", "`, invoking `each` for every element. This
+/// replaces the hand-written `for x in &v[..v.len() - 1] { ...; write!(", ") }`
+/// plus a trailing `v.last()` idiom, which was duplicated across calls,
+/// array initializers, and struct initializers and is easy to get off by one.
+fn format_comma_separated<T>(
+    fmt: &mut Formatter<'_>,
+    items: &[T],
+    mut each: impl FnMut(&mut Formatter<'_>, &T) -> fmt::Result,
+) -> fmt::Result {
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            write!(fmt, ", ")?;
+        }
+        each(fmt, item)?;
+    }
+    Ok(())
+}
+
 impl Format for Expr {
     fn format(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
         use Expr::*;
@@ -927,7 +905,6 @@ impl Format for Expr {
             Char(c) => write!(fmt, "'{}'", escape_c_char(*c)),
             Str(s) => write!(fmt, "\"{}\"", escape_c_str(s)),
             Ident(name) => write!(fmt, "{name}"),
-            Variable(var) => var.format(fmt),
             Binary { left, op, right } => {
                 let p = op.precedence();
                 left.fmt_paren_if(fmt, left.precedence() < p)?;
@@ -953,7 +930,7 @@ impl Format for Expr {
                         expr.format(fmt)?;
                         write!(fmt, ")")
                     } else {
-                        let operand = expr.to_string();
+                        let operand = crate::render(&**expr, fmt.options());
                         if needs_separating_space(&op.to_string(), &operand) {
                             write!(fmt, " ")?;
                         }
@@ -978,15 +955,7 @@ impl Format for Expr {
             FnCall { name, args } => {
                 name.fmt_paren_if(fmt, name.precedence() < PREC_POSTFIX)?;
                 write!(fmt, "(")?;
-                if !args.is_empty() {
-                    for arg in &args[..args.len() - 1] {
-                        arg.format(fmt)?;
-                        write!(fmt, ", ")?;
-                    }
-                    if let Some(arg) = args.last() {
-                        arg.format(fmt)?;
-                    }
-                }
+                format_comma_separated(fmt, args, |fmt, arg| arg.format(fmt))?;
                 write!(fmt, ")")
             }
             MemAccess { expr, member } => {
@@ -1015,9 +984,10 @@ impl Format for Expr {
                 write!(fmt, ")")
             }
             AlignOf(t) => {
-                let kw = match fmt.attr_style() {
-                    crate::AttrStyle::C23 => "alignof",
-                    crate::AttrStyle::Gnu => "_Alignof",
+                let kw = if fmt.c23_keywords() {
+                    "alignof"
+                } else {
+                    "_Alignof"
                 };
                 write!(fmt, "{kw}(")?;
                 t.format(fmt)?;
@@ -1036,40 +1006,22 @@ impl Format for Expr {
             }
             InitArr(v) => {
                 write!(fmt, "{{")?;
-                if !v.is_empty() {
-                    for x in &v[..v.len() - 1] {
-                        if let Some(idx) = x.0 {
-                            write!(fmt, "[{idx}]=")?;
-                        }
-                        x.1.format(fmt)?;
-                        write!(fmt, ", ")?;
+                format_comma_separated(fmt, v, |fmt, (idx, expr)| {
+                    if let Some(idx) = idx {
+                        write!(fmt, "[{idx}]=")?;
                     }
-                    if let Some(last) = v.last() {
-                        if let Some(idx) = last.0 {
-                            write!(fmt, "[{idx}]=")?;
-                        }
-                        last.1.format(fmt)?;
-                    }
-                }
+                    expr.format(fmt)
+                })?;
                 write!(fmt, "}}")
             }
             InitStruct(v) => {
                 write!(fmt, "{{")?;
-                if !v.is_empty() {
-                    for x in &v[..v.len() - 1] {
-                        if let Some(name) = &x.0 {
-                            write!(fmt, ".{name}=")?;
-                        }
-                        x.1.format(fmt)?;
-                        write!(fmt, ", ")?;
+                format_comma_separated(fmt, v, |fmt, (name, expr)| {
+                    if let Some(name) = name {
+                        write!(fmt, ".{name}=")?;
                     }
-                    if let Some(last) = v.last() {
-                        if let Some(name) = &last.0 {
-                            write!(fmt, ".{name}=")?;
-                        }
-                        last.1.format(fmt)?;
-                    }
-                }
+                    expr.format(fmt)
+                })?;
                 write!(fmt, "}}")
             }
             CompoundLiteral { t, init } => {
@@ -1473,7 +1425,7 @@ mod tests {
         let c23 = render(
             &a,
             RenderOptions {
-                attr_style: AttrStyle::C23,
+                c23_keywords: true,
                 ..Default::default()
             },
         );

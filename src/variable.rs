@@ -282,6 +282,7 @@ impl VariableBuilder {
     /// ```
     pub fn make_static(mut self) -> Self {
         self.is_static = true;
+        self.is_extern = false;
         self
     }
 
@@ -302,6 +303,7 @@ impl VariableBuilder {
     /// ```
     pub fn make_extern(mut self) -> Self {
         self.is_extern = true;
+        self.is_static = false;
         self
     }
 

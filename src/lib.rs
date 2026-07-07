@@ -53,8 +53,7 @@
 //!
 //! ## Example Usage
 //! ```rust
-//! use function::FunctionBuilder;
-//! use types::{BaseType, Type};
+//! use tamago::{BaseType, Block, FunctionBuilder, ParameterBuilder, Type};
 //!
 //! let func = FunctionBuilder::new_with_str("my_function", Type::new(BaseType::Int).build())
 //!     .param(
@@ -82,6 +81,7 @@ mod block;
 mod comment;
 mod conditional;
 mod enums;
+mod escape;
 mod expr;
 mod formatter;
 mod function;
@@ -97,19 +97,19 @@ mod types;
 mod union;
 mod variable;
 
-pub use attribute::{format_annotations, format_attrs, Attribute};
+pub use attribute::{Attribute, format_annotations, format_attrs};
 pub use block::{Block, BlockBuilder, Statement};
 pub use comment::{Comment, CommentBuilder, DocComment, DocCommentBuilder};
 pub use conditional::{If, IfBuilder, Switch, SwitchBuilder};
 pub use enums::{Enum, EnumBuilder, Variant, VariantBuilder};
 pub use expr::{AssignOp, BinOp, EncodingPrefix, Expr, IntBase, IntSuffix, UnaryOp};
 pub use formatter::{
-    render, render_to, render_to_io, AttrStyle, BraceStyle, Format, Formatter, IndentStyle,
-    RenderOptions, SourceLoc,
+    AttrStyle, BraceStyle, Format, Formatter, IndentStyle, RenderOptions, SourceLoc, render,
+    render_to, render_to_io,
 };
 pub use function::{Function, FunctionBuilder, Parameter, ParameterBuilder};
-pub use ident::{is_c_keyword, sanitize_ident, Gensym, C_KEYWORDS};
-pub use loops::{DoWhile, DoWhileBuilder, For, ForBuilder, While, WhileBuilder};
+pub use ident::{C_KEYWORDS, Gensym, is_c_keyword, sanitize_ident};
+pub use loops::{DoWhile, DoWhileBuilder, For, ForBuilder, ForInit, While, WhileBuilder};
 pub use module::{HeaderGuard, Module, ModuleBuilder};
 pub use preprocessor::{
     ErrorDirective, ErrorDirectiveBuilder, FuncMacro, FuncMacroBuilder, IfDefDirective,
@@ -121,6 +121,6 @@ pub use scope::{GlobalStatement, Scope, ScopeBuilder};
 pub use static_assert::StaticAssert;
 pub use structs::{AggregateKind, AnonAggregate, Field, FieldBuilder, Struct, StructBuilder};
 pub use typedef::{TypeDef, TypeDefBuilder};
-pub use types::{declare, BaseType, Type, TypeBuilder, TypeQualifier};
+pub use types::{BaseType, Type, TypeBuilder, TypeQualifier, declare};
 pub use union::{Union, UnionBuilder};
 pub use variable::{Variable, VariableBuilder};

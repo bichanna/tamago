@@ -30,7 +30,7 @@
 
 use std::fmt::{self, Write};
 
-use crate::expr::escape_c_str;
+use crate::escape::escape_c_str;
 use crate::*;
 use tamacro::DisplayFromFormat;
 

@@ -97,6 +97,12 @@ pub struct ScopeBuilder {
     global_stmts: Vec<GlobalStatement>,
 }
 
+impl Default for ScopeBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ScopeBuilder {
     /// Creates and returns a new `ScopeBuilder` to construct a `Scope`.
     ///

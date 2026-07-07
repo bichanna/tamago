@@ -30,7 +30,7 @@
 
 use std::fmt::{self, Write};
 
-use crate::{Block, Expr, Format, Formatter, Statement};
+use crate::{Block, Expr, Format, Formatter, Statement, Variable};
 use tamacro::DisplayFromFormat;
 
 /// Represents a standard while loop in C.
@@ -392,12 +392,36 @@ impl DoWhileBuilder {
 ///         .build())
 ///     .build();
 /// ```
+/// The initialization clause of a `for` loop.
+///
+/// C allows the first clause of a `for` to be *either* a declaration
+/// (`for (int i = 0; ...)`) or an ordinary expression (`for (i = 0; ...)`).
+/// These are genuinely different grammatical categories, so they get distinct
+/// variants here rather than smuggling a declaration through the expression
+/// type.
+#[derive(Debug, Clone, DisplayFromFormat)]
+pub enum ForInit {
+    /// A declaration, e.g. `int i = 0`.
+    Decl(Variable),
+
+    /// An expression, e.g. `i = 0`.
+    Expr(Expr),
+}
+
+impl Format for ForInit {
+    fn format(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            ForInit::Decl(v) => v.format(fmt),
+            ForInit::Expr(e) => e.format(fmt),
+        }
+    }
+}
+
 #[derive(Debug, Clone, DisplayFromFormat)]
 pub struct For {
-    /// The initialization expression that runs once before the loop begins.
-    /// This is typically used to declare and initialize loop variables or counters.
-    /// Can be `None` if no initialization is needed.
-    pub init: Option<Expr>,
+    /// The initialization clause that runs once before the loop begins,
+    /// typically declaring and initializing a loop counter. `None` omits it.
+    pub init: Option<ForInit>,
 
     /// The condition expression that determines whether the loop continues.
     /// Evaluated before each iteration. The loop executes as long as this
@@ -469,10 +493,16 @@ impl Format for For {
 /// with method chaining, and supports optional components (initialization,
 /// condition, and step expressions).
 pub struct ForBuilder {
-    init: Option<Expr>,
+    init: Option<ForInit>,
     cond: Option<Expr>,
     step: Option<Expr>,
     body: Block,
+}
+
+impl Default for ForBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ForBuilder {
@@ -494,25 +524,29 @@ impl ForBuilder {
         }
     }
 
-    /// Sets the initialization expression of the for loop.
+    /// Sets the initialization clause of the for loop.
     ///
-    /// This expression is executed once before the loop begins, and is typically
-    /// used to declare and initialize loop variables or counters.
+    /// See [`init_decl`](Self::init_decl) and [`init_expr`](Self::init_expr) for
+    /// convenience wrappers that take a [`Variable`] or [`Expr`] directly.
     ///
     /// ## Parameters
-    /// - `init`: The initialization expression
+    /// - `init`: The initialization clause
     ///
     /// ## Returns
     /// The builder instance for method chaining
-    ///
-    /// ## Example
-    /// ```rust
-    /// let builder = ForBuilder::new()
-    ///     .init(expr!("int i = 0"));
-    /// ```
-    pub fn init(mut self, init: Expr) -> Self {
+    pub fn init(mut self, init: ForInit) -> Self {
         self.init = Some(init);
         self
+    }
+
+    /// Sets the initialization clause to a declaration, e.g. `int i = 0`.
+    pub fn init_decl(self, decl: Variable) -> Self {
+        self.init(ForInit::Decl(decl))
+    }
+
+    /// Sets the initialization clause to an expression, e.g. `i = 0`.
+    pub fn init_expr(self, expr: Expr) -> Self {
+        self.init(ForInit::Expr(expr))
     }
 
     /// Sets the condition expression of the for loop.
@@ -660,11 +694,11 @@ mod tests {
     #[test]
     fn for_stmt() {
         let f = ForBuilder::new()
-            .init(Expr::Variable(Box::new(
+            .init_decl(
                 VariableBuilder::new_with_str("i", Type::new(BaseType::Int).build())
                     .value(Expr::Int(0))
                     .build(),
-            )))
+            )
             .cond(Expr::Binary {
                 left: Box::new(Expr::Ident("i".to_string())),
                 op: BinOp::LT,

@@ -127,6 +127,12 @@ pub struct BlockBuilder {
     stmts: Vec<Statement>,
 }
 
+impl Default for BlockBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BlockBuilder {
     /// Creates and returns a new `BlockBuilder` instance.
     ///

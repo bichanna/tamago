@@ -118,7 +118,11 @@ impl Comment {
     /// A `fmt::Result` indicating success or failure of the write operation
     fn push_heading(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
         if self.is_heading {
-            writeln!(fmt, "{}", "/".repeat(80usize.saturating_sub(fmt.spaces)))?;
+            writeln!(
+                fmt,
+                "{}",
+                "/".repeat(80usize.saturating_sub(fmt.current_indent()))
+            )?;
         }
 
         Ok(())
@@ -143,6 +147,12 @@ impl Format for Comment {
 pub struct CommentBuilder {
     comment: String,
     is_heading: bool,
+}
+
+impl Default for CommentBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CommentBuilder {
@@ -358,6 +368,12 @@ impl Format for DocComment {
 /// for a more readable and flexible API.
 pub struct DocCommentBuilder {
     docs: Vec<String>,
+}
+
+impl Default for DocCommentBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DocCommentBuilder {

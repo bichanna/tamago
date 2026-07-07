@@ -44,8 +44,8 @@
 //! ```
 
 use crate::{
-    Enum, Function, GlobalStatement, Include, IncludeBuilder, ScopeBuilder, Struct, TypeDef, Union,
-    Variable, VariableBuilder,
+    Enum, Function, GlobalStatement, Include, IncludeBuilder, RenderOptions, ScopeBuilder, Struct,
+    TypeDef, Union, Variable, VariableBuilder,
 };
 
 /// Controls how a module's header protects itself against multiple inclusion
@@ -95,9 +95,16 @@ impl Module {
         &self.source
     }
 
-    /// Renders the header file, wrapped in the configured include guard.
+    /// Renders the header file, wrapped in the configured include guard, using
+    /// default [`RenderOptions`].
     pub fn header(&self) -> String {
-        let body = render(&self.header);
+        self.header_with(RenderOptions::default())
+    }
+
+    /// Renders the header file with explicit [`RenderOptions`] (so `#line`
+    /// directives, tab indentation, C23 spellings, brace style, etc. all apply).
+    pub fn header_with(&self, opts: RenderOptions) -> String {
+        let body = render_with(&self.header, opts);
         match &self.guard {
             HeaderGuard::PragmaOnce => {
                 if body.is_empty() {
@@ -113,9 +120,14 @@ impl Module {
     }
 
     /// Renders the source file, prefixed (unless disabled) with an include of
-    /// this module's own header.
+    /// this module's own header, using default [`RenderOptions`].
     pub fn source(&self) -> String {
-        let body = render(&self.source);
+        self.source_with(RenderOptions::default())
+    }
+
+    /// Renders the source file with explicit [`RenderOptions`].
+    pub fn source_with(&self, opts: RenderOptions) -> String {
+        let body = render_with(&self.source, opts);
         if self.self_include {
             if body.is_empty() {
                 format!("#include \"{}.h\"\n", self.name)
@@ -128,15 +140,18 @@ impl Module {
     }
 }
 
-/// Renders a slice of global statements to a string via a [`Scope`]
-fn render(stmts: &[GlobalStatement]) -> String {
-    ScopeBuilder::new()
-        .global_statements(stmts.to_vec())
-        .build()
-        .to_string()
+/// Renders a slice of global statements to a string via a [`Scope`], with the
+/// given options.
+fn render_with(stmts: &[GlobalStatement], opts: RenderOptions) -> String {
+    crate::render(
+        &ScopeBuilder::new()
+            .global_statements(stmts.to_vec())
+            .build(),
+        opts,
+    )
 }
 
-/// Derives a default `#ifndef` guard macro from a module name, for exmaple, `"gfx/canvas"`
+/// Derives a default `#ifndef` guard macro from a module name, for example, `"gfx/canvas"`
 /// becomes `CANVAS_H`.
 fn default_guard(name: &str) -> String {
     let stem = name.rsplit(['/', '\\']).next().unwrap_or(name);
@@ -332,7 +347,7 @@ impl ModuleBuilder {
         self
     }
 
-    /// Finalizs and returns the [`Module`]
+    /// Finalizes and returns the [`Module`]
     pub fn build(self) -> Module {
         Module {
             name: self.name,
