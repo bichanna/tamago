@@ -27,7 +27,8 @@
 use std::fmt::{self, Write};
 
 use crate::{
-    Attribute, Block, DocComment, Format, Formatter, Statement, Type, declare, format_annotations,
+    declare_with, format_annotations, Attribute, Block, DocComment, Format, Formatter,
+    RenderOptions, Statement, StorageClass, Type,
 };
 use tamacro::DisplayFromFormat;
 
@@ -71,11 +72,9 @@ pub struct Function {
     /// Whether the function is declared with the 'inline' keyword
     pub is_inline: bool,
 
-    /// Whether the function is declared with the 'static' keyword
-    pub is_static: bool,
-
-    /// Whether the function is declared with the 'extern' keyword
-    pub is_extern: bool,
+    /// The storage class (`static`, `extern`, or none). `static` and `extern`
+    /// are mutually exclusive, so they share one field.
+    pub storage: StorageClass,
 
     /// The body of the function. `None` means this is a prototype (a declaration
     /// only); `Some(block)` is a definition, even when the block is empty.
@@ -166,12 +165,8 @@ impl Format for Function {
             write!(fmt, "{attrs} ")?;
         }
 
-        if self.is_extern {
-            write!(fmt, "extern ")?;
-        }
-
-        if self.is_static {
-            write!(fmt, "static ")?;
+        if let Some(kw) = self.storage.keyword() {
+            write!(fmt, "{kw} ")?;
         }
 
         if self.is_inline {
@@ -183,14 +178,18 @@ impl Format for Function {
         } else {
             self.params
                 .iter()
-                .map(|p| p.render(fmt.attr_style()))
+                .map(|p| p.render_with(fmt.options()))
                 .collect::<Vec<_>>()
                 .join(", ")
         };
         write!(
             fmt,
             "{}",
-            declare(&self.ret, &format!("{}({})", self.name, params))
+            declare_with(
+                &self.ret,
+                &format!("{}({})", self.name, params),
+                fmt.options()
+            )
         )?;
 
         match &self.body {
@@ -213,8 +212,7 @@ pub struct FunctionBuilder {
     params: Vec<Parameter>,
     ret: Type,
     is_inline: bool,
-    is_static: bool,
-    is_extern: bool,
+    storage: StorageClass,
     body: Option<Block>,
     attrs: Vec<Attribute>,
     raw_attrs: Vec<String>,
@@ -244,8 +242,7 @@ impl FunctionBuilder {
             ret,
             params: vec![],
             is_inline: false,
-            is_static: false,
-            is_extern: false,
+            storage: StorageClass::None,
             body: None,
             attrs: vec![],
             raw_attrs: vec![],
@@ -317,7 +314,8 @@ impl FunctionBuilder {
         self
     }
 
-    /// Makes the function static by setting the `is_static` flag to true.
+    /// Makes the function static (internal linkage). Mutually exclusive with
+    /// `extern`; calling this after `make_extern` replaces it.
     ///
     /// In C, the `static` keyword for functions limits the visibility of the function
     /// to the file in which it is defined.
@@ -333,12 +331,11 @@ impl FunctionBuilder {
     ///     .make_static();
     /// ```
     pub fn make_static(mut self) -> Self {
-        self.is_static = true;
-        self.is_extern = false;
+        self.storage = StorageClass::Static;
         self
     }
 
-    /// Makes the function extern by setting the `is_extern` flag to true.
+    /// Makes the function extern.
     ///
     /// In C, the `extern` keyword indicates that the function is defined elsewhere,
     /// typically in another compilation unit.
@@ -354,8 +351,13 @@ impl FunctionBuilder {
     ///     .make_extern();
     /// ```
     pub fn make_extern(mut self) -> Self {
-        self.is_extern = true;
-        self.is_static = false;
+        self.storage = StorageClass::Extern;
+        self
+    }
+
+    /// Sets the storage class explicitly.
+    pub fn storage(mut self, storage: StorageClass) -> Self {
+        self.storage = storage;
         self
     }
 
@@ -548,8 +550,7 @@ impl FunctionBuilder {
             ret: self.ret,
             params: self.params,
             is_inline: self.is_inline,
-            is_static: self.is_static,
-            is_extern: self.is_extern,
+            storage: self.storage,
             body: self.body,
             attrs: self.attrs,
             raw_attrs: self.raw_attrs,
@@ -716,24 +717,41 @@ impl Parameter {
     /// Renders this parameter as a C declarator (its type with the parameter
     /// name threaded through), e.g. `int x`, `char *s`, or `void (*cb)(int)`
     pub fn declarator(&self) -> String {
-        declare(&self.t, &self.name)
+        self.declarator_with(RenderOptions::default())
+    }
+
+    /// Like [`declarator`](Self::declarator), but renders any option-sensitive
+    /// pieces of the type (e.g. an `alignof` inside an array size) using the
+    /// given [`RenderOptions`].
+    pub fn declarator_with(&self, opts: RenderOptions) -> String {
+        declare_with(&self.t, &self.name, opts)
     }
 
     /// Renders this parameter including any leading attributes, in the given
     /// style, e.g. `__attribute__((unused)) int x`.
     pub fn render(&self, style: crate::AttrStyle) -> String {
-        let attrs = format_annotations(&self.raw_attrs, &self.attrs, style);
+        self.render_with(RenderOptions {
+            attr_style: style,
+            ..Default::default()
+        })
+    }
+
+    /// Like [`render`](Self::render), but takes full [`RenderOptions`] so the
+    /// declarator and its attributes render consistently with the ambient
+    /// formatter.
+    pub fn render_with(&self, opts: RenderOptions) -> String {
+        let attrs = format_annotations(&self.raw_attrs, &self.attrs, opts.attr_style);
         if attrs.is_empty() {
-            self.declarator()
+            self.declarator_with(opts)
         } else {
-            format!("{attrs} {}", self.declarator())
+            format!("{attrs} {}", self.declarator_with(opts))
         }
     }
 }
 
 impl Format for Parameter {
     fn format(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
-        write!(fmt, "{}", self.render(fmt.attr_style()))
+        write!(fmt, "{}", self.render_with(fmt.options()))
     }
 }
 
@@ -803,5 +821,23 @@ mod tests {
             f.to_string(),
             "static inline int x(void) {\n  return 0;\n}\n"
         );
+    }
+
+    #[test]
+    fn storage_class_is_mutually_exclusive() {
+        // The last storage setter wins. you can never get `extern static`
+        let f = FunctionBuilder::new_with_str("f", Type::new(BaseType::Int).build())
+            .make_static()
+            .make_extern()
+            .build();
+        assert_eq!(f.storage, StorageClass::Extern);
+        assert_eq!(f.to_string(), "extern int f(void);\n");
+
+        let g = FunctionBuilder::new_with_str("g", Type::new(BaseType::Int).build())
+            .make_extern()
+            .make_static()
+            .build();
+        assert_eq!(g.storage, StorageClass::Static);
+        assert_eq!(g.to_string(), "static int g(void);\n");
     }
 }

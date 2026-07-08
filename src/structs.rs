@@ -33,7 +33,7 @@
 use std::fmt::{self, Write};
 
 use crate::{
-    Attribute, BaseType, DocComment, Format, Formatter, Type, declare, format_annotations,
+    declare_with, format_annotations, Attribute, BaseType, DocComment, Format, Formatter, Type,
 };
 use tamacro::DisplayFromFormat;
 
@@ -110,8 +110,12 @@ pub struct Struct {
     /// The name of the struct
     name: String,
 
-    /// The fields of the struct
-    fields: Vec<Field>,
+    /// The struct's body: `None` is a forward declaration (`struct Foo;`),
+    /// `Some(fields)` is a definition (`struct Foo { ... };`) — including
+    /// `Some(vec![])` for an explicitly empty definition. This disambiguates an
+    /// opaque/forward declaration from a (possibly empty) definition, which a
+    /// bare `Vec<Field>` could not.
+    body: Option<Vec<Field>>,
 
     /// The attributes applied to the struct (e.g. `packed`, `aligned`)
     attrs: Vec<Attribute>,
@@ -188,9 +192,9 @@ impl Format for Struct {
 
         write!(fmt, " {}", self.name)?;
 
-        if !self.fields.is_empty() {
+        if let Some(fields) = &self.body {
             fmt.block(|fmt| {
-                for field in &self.fields {
+                for field in fields {
                     field.format(fmt)?;
                 }
                 Ok(())
@@ -208,6 +212,8 @@ impl Format for Struct {
 pub struct StructBuilder {
     name: String,
     fields: Vec<Field>,
+    force_forward: bool,
+    force_body: bool,
     attrs: Vec<Attribute>,
     raw_attrs: Vec<String>,
     doc: Option<DocComment>,
@@ -235,6 +241,8 @@ impl StructBuilder {
         Self {
             name,
             fields: vec![],
+            force_forward: false,
+            force_body: false,
             attrs: vec![],
             raw_attrs: vec![],
             doc: None,
@@ -324,6 +332,29 @@ impl StructBuilder {
         self
     }
 
+    /// Marks this as a forward declaration/opaque type, emitting `struct Foo;`
+    /// with no body even if fields were added.
+    ///
+    /// ```rust
+    /// let fwd = StructBuilder::new_with_str("Opaque").forward_declaration().build();
+    /// assert_eq!(fwd.to_string(), "struct Opaque;\n");
+    /// ```
+    pub fn forward_declaration(mut self) -> Self {
+        self.force_forward = true;
+        self
+    }
+
+    /// Forces a (possibly empty) definition rather than a forward declaration.
+    ///
+    /// A struct with no fields normally renders as a forward declaration
+    /// (`struct Foo;`). Call this to instead emit an empty definition
+    /// (`struct Foo {\n};`) — note that an empty struct body is a GNU/C++
+    /// extension and is not valid ISO C.
+    pub fn define(mut self) -> Self {
+        self.force_body = true;
+        self
+    }
+
     /// Adds a single attribute (e.g. [`Attribute::packed`]) to the struct.
     ///
     /// Struct attributes are emitted right after the `struct` keyword, e.g.
@@ -357,9 +388,17 @@ impl StructBuilder {
     /// # Returns
     /// A fully constructed `Struct` instance
     pub fn build(self) -> Struct {
+        let body = if self.force_forward {
+            None
+        } else if self.fields.is_empty() && !self.force_body {
+            None
+        } else {
+            Some(self.fields)
+        };
+
         Struct {
             name: self.name,
-            fields: self.fields,
+            body,
             attrs: self.attrs,
             raw_attrs: self.raw_attrs,
             doc: self.doc,
@@ -483,7 +522,7 @@ impl Format for Field {
                 write!(
                     fmt,
                     "{}",
-                    declare(&self.t, self.name.as_deref().unwrap_or(""))
+                    declare_with(&self.t, self.name.as_deref().unwrap_or(""), fmt.options())
                 )?;
 
                 if let Some(w) = self.width {
@@ -842,5 +881,29 @@ char some_field;
             s2.to_string(),
             "struct MYLANG_PACKED __attribute__((aligned(8))) S;\n"
         );
+    }
+
+    #[test]
+    fn forward_declaration_vs_empty_definition() {
+        // no fields defaults to a forward declaration (backwards compatible)
+        let fwd = StructBuilder::new_with_str("Opaque").build();
+        assert_eq!(fwd.to_string(), "struct Opaque;\n");
+
+        // ...and can be requested explicitly, even with fields present
+        let forced = StructBuilder::new_with_str("Opaque")
+            .field(FieldBuilder::new_with_str("x", Type::new(BaseType::Int).build()).build())
+            .forward_declaration()
+            .build();
+        assert_eq!(forced.to_string(), "struct Opaque;\n");
+
+        // nn explicit (GNU/C++) empty definition is now expressible and distinct
+        let empty = StructBuilder::new_with_str("Empty").define().build();
+        assert_eq!(empty.to_string(), "struct Empty {\n};\n");
+
+        // a normal definition is unaffected :)
+        let normal = StructBuilder::new_with_str("P")
+            .field(FieldBuilder::new_with_str("x", Type::new(BaseType::Int).build()).build())
+            .build();
+        assert_eq!(normal.to_string(), "struct P {\n  int x;\n};\n");
     }
 }

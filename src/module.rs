@@ -292,7 +292,7 @@ impl ModuleBuilder {
     pub fn function(mut self, f: Function) -> Self {
         if f.is_prototype() {
             self.header.push(GlobalStatement::Function(f));
-        } else if f.is_static {
+        } else if f.storage.is_static() {
             self.source.push(GlobalStatement::Function(f));
         } else {
             self.header
@@ -308,9 +308,9 @@ impl ModuleBuilder {
     /// - any other variable becomes an `extern` declaration in the header and a
     ///   definition in the source.
     pub fn global(mut self, v: Variable) -> Self {
-        if v.is_extern {
+        if v.storage.is_extern() {
             self.header.push(GlobalStatement::Variable(v));
-        } else if v.is_static {
+        } else if v.storage.is_static() {
             self.source.push(GlobalStatement::Variable(v));
         } else {
             let mut decl = VariableBuilder::new(v.name.clone(), v.t.clone()).make_extern();

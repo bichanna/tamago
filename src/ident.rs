@@ -127,6 +127,20 @@ pub fn is_c_keyword(s: &str) -> bool {
 /// distinct inputs can map to the same output (e.g. `"a b"` and `"a-b"` both
 /// become `"a_b"`); use [`Gensym`] when you need guaranteed uniqueness.
 ///
+/// # Caveat: reserved identifiers
+///
+/// "Valid" does not mean "unreserved". C reserves whole classes of identifiers
+/// for the implementation, and this function can emit them:
+/// - anything beginning with an underscore followed by an uppercase letter or a
+///   second underscore (`_Foo`, `__bar`) is reserved for any use, and
+/// - anything beginning with a single underscore (`_foo`) is reserved at file
+///   scope.
+///
+/// So `sanitize_ident("_Foo")` returns `"_Foo"` and `sanitize_ident("123")`
+/// returns `"_123"` — both valid, both reserved. If you are generating names
+/// that must not tread on the implementation's namespace, use
+/// [`sanitize_ident_strict`].
+///
 /// # Examples
 ///
 /// ```rust
@@ -158,12 +172,52 @@ pub fn sanitize_ident(name: &str) -> String {
     out
 }
 
+/// Like [`sanitize_ident`], but additionally guarantees the result is **not** in
+/// C's reserved identifier space.
+///
+/// It does everything [`sanitize_ident`] does, then ensures the identifier does
+/// not begin with an underscore (which is what makes an identifier reserved,
+/// either universally or at file scope): leading underscores are stripped, and
+/// if that would leave an empty or digit-led string, a single `z` is prepended.
+/// A trailing underscore is still appended to dodge keywords.
+///
+/// As with [`sanitize_ident`], distinct inputs may collide (`"_foo"` and `"foo"`
+/// both become `"foo"`); reach for [`Gensym`] when uniqueness matters.
+///
+/// # Examples
+///
+/// ```rust
+/// assert_eq!(sanitize_ident_strict("_Foo"), "Foo");
+/// assert_eq!(sanitize_ident_strict("__bar"), "bar");
+/// assert_eq!(sanitize_ident_strict("123"), "z123");
+/// assert_eq!(sanitize_ident_strict("_"), "z");
+/// assert_eq!(sanitize_ident_strict("normal"), "normal");
+/// ```
+pub fn sanitize_ident_strict(name: &str) -> String {
+    let base = sanitize_ident(name);
+    let trimmed = base.trim_start_matches('_');
+
+    let mut out = if trimmed.is_empty() || trimmed.starts_with(|c: char| c.is_ascii_digit()) {
+        format!("z{trimmed}")
+    } else {
+        trimmed.to_string()
+    };
+
+    if is_c_keyword(&out) {
+        out.push('_');
+    }
+
+    out
+}
+
 /// A generator of fresh, unique identifiers.
 ///
 /// Each call to [`Gensym::fresh`] returns a new name of the form
-/// `{prefix}{n}` with a monotonically increasing counter, so the names never
-/// repeat for the lifetime of the generator. This is handy for compiler-emitted
-/// temporaries, labels, and helper variables.
+/// `{prefix}{n}` with a monotonically increasing counter, so the names do not
+/// repeat while the counter keeps climbing. This is handy for compiler-emitted
+/// temporaries, labels, and helper variables. Note that [`Gensym::reset`] rewinds
+/// the counter to zero, after which previously produced names can recur — call
+/// it only when the earlier names have gone out of scope.
 ///
 /// The default prefix is `__tmp`. the leading double underscore intentionally
 /// lands in C's implementation-reserved identifier space so generated names do
@@ -260,6 +314,26 @@ mod tests {
         assert_eq!(sanitize_ident("_Bool"), "_Bool_");
         // not a keyword, left untouched
         assert_eq!(sanitize_ident("count"), "count");
+    }
+
+    #[test]
+    fn strict_avoids_reserved_identifiers() {
+        // leading underscores (reserved space) are stripped
+        assert_eq!(sanitize_ident_strict("_Foo"), "Foo");
+        assert_eq!(sanitize_ident_strict("__bar"), "bar");
+        assert_eq!(sanitize_ident_strict("_lower"), "lower");
+
+        // empty/digit-led results get a safe leading letter instead of `_`
+        assert_eq!(sanitize_ident_strict("123"), "z123");
+        assert_eq!(sanitize_ident_strict("_"), "z");
+        assert_eq!(sanitize_ident_strict(""), "z");
+        // ordinary names pass through; keywords still dodged
+        assert_eq!(sanitize_ident_strict("normal"), "normal");
+        assert_eq!(sanitize_ident_strict("_int"), "int_");
+        // the result never begins with an underscore
+        for input in ["_Foo", "__x", "_", "___", "123", ""] {
+            assert!(!sanitize_ident_strict(input).starts_with('_'));
+        }
     }
 
     #[test]

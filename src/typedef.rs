@@ -26,7 +26,7 @@
 
 use std::fmt::{self, Write};
 
-use crate::{BaseType, Format, Formatter, Type, declare};
+use crate::{declare_with, BaseType, Format, Formatter, Type};
 use tamacro::DisplayFromFormat;
 
 /// Represents a C-style `typedef` declaration.
@@ -110,7 +110,11 @@ impl TypeDef {
 
 impl Format for TypeDef {
     fn format(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
-        write!(fmt, "typedef {}", declare(&self.t, &self.name))?;
+        write!(
+            fmt,
+            "typedef {}",
+            declare_with(&self.t, &self.name, fmt.options())
+        )?;
         writeln!(fmt, ";")
     }
 }

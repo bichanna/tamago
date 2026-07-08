@@ -42,7 +42,7 @@
 
 use std::fmt::{self, Write};
 
-use crate::{Expr, Format, Formatter};
+use crate::{Expr, Format, Formatter, RenderOptions};
 use tamacro::DisplayFromFormat;
 
 /// Represents all base types used in C.
@@ -424,6 +424,14 @@ pub enum Type {
 /// assert_eq!(declare(&t, "p"), "int (*p)[10]");
 /// ```
 pub fn declare(ty: &Type, inner: &str) -> String {
+    declare_with(ty, inner, RenderOptions::default())
+}
+
+/// Like [`declare`], but renders any option-sensitive sub-expressions (notably
+/// an array size such as `alignof(T)`) using the given [`RenderOptions`] instead
+/// of the defaults. When a `Type` is formatted through a [`Formatter`], this is
+/// called with the formatter's own options so nested spellings stay consistent.
+pub fn declare_with(ty: &Type, inner: &str, opts: RenderOptions) -> String {
     match ty {
         Type::Base { base, quals } => {
             let q = quals_prefix(quals);
@@ -444,18 +452,21 @@ pub fn declare(ty: &Type, inner: &str) -> String {
                 Type::Array { .. } | Type::Function { .. } => format!("({star})"),
                 _ => star,
             };
-            declare(to, &next)
+            declare_with(to, &next, opts)
         }
         Type::Array { size, of } => {
-            let sz = size.as_ref().map(|e| e.to_string()).unwrap_or_default();
-            declare(of, &format!("{inner}[{sz}]"))
+            let sz = size
+                .as_ref()
+                .map(|e| crate::render(&**e, opts))
+                .unwrap_or_default();
+            declare_with(of, &format!("{inner}[{sz}]"), opts)
         }
         Type::Function {
             ret,
             params,
             variadic,
         } => {
-            let mut parts: Vec<String> = params.iter().map(|p| declare(p, "")).collect();
+            let mut parts: Vec<String> = params.iter().map(|p| declare_with(p, "", opts)).collect();
             if *variadic {
                 parts.push("...".to_string());
             }
@@ -464,7 +475,7 @@ pub fn declare(ty: &Type, inner: &str) -> String {
             } else {
                 parts.join(", ")
             };
-            declare(ret, &format!("{inner}({params_str})"))
+            declare_with(ret, &format!("{inner}({params_str})"), opts)
         }
         Type::Raw(spelling) => {
             if inner.is_empty() {
@@ -616,7 +627,7 @@ impl Format for Type {
     fn format(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
         // Formatting a bare `Type` yields its abstract declarator (empty name),
         // which is what casts and `sizeof` want.
-        write!(fmt, "{}", declare(self, ""))
+        write!(fmt, "{}", declare_with(self, "", fmt.options()))
     }
 }
 
@@ -896,5 +907,25 @@ mod tests {
         // behaves like a base type: a pointer to a raw type still works
         let p = Type::ptr(Type::raw("__m128"));
         assert_eq!(p.declarator("v"), "__m128 *v");
+    }
+
+    #[test]
+    fn array_size_respects_render_options() {
+        use crate::render;
+        use BaseType::Int;
+
+        let t = Type::array(Type::base(Int), Some(Expr::new_alignof(Type::base(Int))));
+        assert_eq!(t.to_string(), "int[_Alignof(int)]");
+        let c23 = render(
+            &t,
+            RenderOptions {
+                c23_keywords: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(c23, "int[alignof(int)]");
+
+        // The default-options helper still behaves as before
+        assert_eq!(declare(&t, "xs"), "int xs[_Alignof(int)]");
     }
 }

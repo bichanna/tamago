@@ -27,7 +27,10 @@
 
 use std::fmt::{self, Write};
 
-use crate::{Attribute, DocComment, Expr, Format, Formatter, Type, declare, format_annotations};
+use crate::{
+    declare_with, format_annotations, Attribute, DocComment, Expr, Format, Formatter, StorageClass,
+    Type,
+};
 use tamacro::DisplayFromFormat;
 
 /// Represents a C variable with its properties and attributes.
@@ -63,11 +66,9 @@ pub struct Variable {
     /// The optional initial value of the variable
     pub value: Option<Expr>,
 
-    /// Whether the variable is declared with the `static` keyword
-    pub is_static: bool,
-
-    /// Whether the variable is declared with the `extern` keyword
-    pub is_extern: bool,
+    /// The storage class (`static`, `extern`, or none). `static` and `extern`
+    /// are mutually exclusive, so they share one field.
+    pub storage: StorageClass,
 
     /// The attributes applied to the variable (e.g. `aligned`, `section`, `used`)
     pub attrs: Vec<Attribute>,
@@ -134,17 +135,13 @@ impl Format for Variable {
             write!(fmt, "{attrs} ")?;
         }
 
-        if self.is_extern {
-            write!(fmt, "extern ")?;
+        if let Some(kw) = self.storage.keyword() {
+            write!(fmt, "{kw} ")?;
         }
 
-        if self.is_static {
-            write!(fmt, "static ")?;
-        }
+        write!(fmt, "{}", declare_with(&self.t, &self.name, fmt.options()))?;
 
-        write!(fmt, "{}", declare(&self.t, &self.name))?;
-
-        if !self.is_extern {
+        if !self.storage.is_extern() {
             if let Some(value) = &self.value {
                 write!(fmt, " = ")?;
                 value.format(fmt)?;
@@ -163,8 +160,7 @@ pub struct VariableBuilder {
     name: String,
     t: Type,
     value: Option<Expr>,
-    is_static: bool,
-    is_extern: bool,
+    storage: StorageClass,
     attrs: Vec<Attribute>,
     raw_attrs: Vec<String>,
     doc: Option<DocComment>,
@@ -192,8 +188,7 @@ impl VariableBuilder {
             name,
             t,
             value: None,
-            is_static: false,
-            is_extern: false,
+            storage: StorageClass::None,
             attrs: vec![],
             raw_attrs: vec![],
             doc: None,
@@ -281,8 +276,8 @@ impl VariableBuilder {
     ///     .make_static();
     /// ```
     pub fn make_static(mut self) -> Self {
-        self.is_static = true;
-        self.is_extern = false;
+        // `static` and `extern` are mutually exclusive; the enum enforces that.
+        self.storage = StorageClass::Static;
         self
     }
 
@@ -302,8 +297,13 @@ impl VariableBuilder {
     ///     .make_extern();
     /// ```
     pub fn make_extern(mut self) -> Self {
-        self.is_extern = true;
-        self.is_static = false;
+        self.storage = StorageClass::Extern;
+        self
+    }
+
+    /// Sets the storage class explicitly.
+    pub fn storage(mut self, storage: StorageClass) -> Self {
+        self.storage = storage;
         self
     }
 
@@ -377,8 +377,7 @@ impl VariableBuilder {
             name: self.name,
             t: self.t,
             value: self.value,
-            is_static: self.is_static,
-            is_extern: self.is_extern,
+            storage: self.storage,
             attrs: self.attrs,
             raw_attrs: self.raw_attrs,
             doc: self.doc,
@@ -415,5 +414,23 @@ mod tests {
         let another_res = "static bool another_var";
 
         assert_eq!(another_var.to_string(), another_res);
+    }
+
+    #[test]
+    fn extern_omits_initializer_and_storage_is_exclusive() {
+        let ext = VariableBuilder::new_with_str("g", TypeBuilder::new(BaseType::Int).build())
+            .value(Expr::Int(5))
+            .make_extern()
+            .build();
+        assert_eq!(ext.storage, StorageClass::Extern);
+        assert_eq!(ext.to_string(), "extern int g");
+
+        let stat = VariableBuilder::new_with_str("g", TypeBuilder::new(BaseType::Int).build())
+            .value(Expr::Int(5))
+            .make_extern()
+            .make_static()
+            .build();
+        assert_eq!(stat.storage, StorageClass::Static);
+        assert_eq!(stat.to_string(), "static int g = 5");
     }
 }

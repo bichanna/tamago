@@ -1436,6 +1436,22 @@ mod tests {
     }
 
     #[test]
+    fn c23_alignof_spelling_propagates_through_unary() {
+        // a prefix-unary operand used to be rendered with default
+        // options, so `alignof` inside it reverted to `_Alignof` under C23
+        let e = Expr::new_unary(Expr::new_alignof(Type::base(BaseType::Int)), UnaryOp::Neg);
+        assert_eq!(e.to_string(), "-_Alignof(int)");
+        let c23 = render(
+            &e,
+            RenderOptions {
+                c23_keywords: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(c23, "-alignof(int)");
+    }
+
+    #[test]
     fn prefix_and_postfix_inc_dec() {
         let id = || Expr::new_ident_with_str("a");
         assert_eq!(Expr::new_unary(id(), UnaryOp::Inc).to_string(), "a++");
