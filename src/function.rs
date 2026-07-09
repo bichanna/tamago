@@ -27,8 +27,8 @@
 use std::fmt::{self, Write};
 
 use crate::{
-    declare_with, format_annotations, Attribute, Block, DocComment, Format, Formatter,
-    RenderOptions, Statement, StorageClass, Type,
+    Attribute, Block, DocComment, Format, Formatter, RenderOptions, Statement, StorageClass, Type,
+    declare_with, has_annotations, write_annotations,
 };
 use tamacro::DisplayFromFormat;
 
@@ -160,9 +160,9 @@ impl Format for Function {
             doc.format(fmt)?;
         }
 
-        let attrs = format_annotations(&self.raw_attrs, &self.attrs, fmt.attr_style());
-        if !attrs.is_empty() {
-            write!(fmt, "{attrs} ")?;
+        if has_annotations(&self.raw_attrs, &self.attrs) {
+            write_annotations(fmt, &self.raw_attrs, &self.attrs)?;
+            write!(fmt, " ")?;
         }
 
         if let Some(kw) = self.storage.keyword() {
@@ -739,19 +739,22 @@ impl Parameter {
     /// Like [`render`](Self::render), but takes full [`RenderOptions`] so the
     /// declarator and its attributes render consistently with the ambient
     /// formatter.
+    ///
+    /// A parameter is rendered as a string because it is spliced into the middle
+    /// of a function declarator's parameter list; this simply drives the
+    /// [`Format`] impl over a scratch buffer so both paths stay in sync.
     pub fn render_with(&self, opts: RenderOptions) -> String {
-        let attrs = format_annotations(&self.raw_attrs, &self.attrs, opts.attr_style);
-        if attrs.is_empty() {
-            self.declarator_with(opts)
-        } else {
-            format!("{attrs} {}", self.declarator_with(opts))
-        }
+        crate::render(self, opts)
     }
 }
 
 impl Format for Parameter {
     fn format(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
-        write!(fmt, "{}", self.render_with(fmt.options()))
+        if has_annotations(&self.raw_attrs, &self.attrs) {
+            write_annotations(fmt, &self.raw_attrs, &self.attrs)?;
+            write!(fmt, " ")?;
+        }
+        write!(fmt, "{}", declare_with(&self.t, &self.name, fmt.options()))
     }
 }
 

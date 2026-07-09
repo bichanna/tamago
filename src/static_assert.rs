@@ -29,15 +29,16 @@
 
 use std::fmt::{self, Write};
 
-use crate::{AttrStyle, Expr, Format, Formatter};
+use crate::{Expr, Format, Formatter};
 use tamacro::DisplayFromFormat;
 
 /// A `_Static_assert(cond, "message")` compile-time assertion.
 ///
 /// Renders with the C11 keyword `_Static_assert` by default, or the C23 spelling
-/// `static_assert` when the formatter's attribute style is
-/// [`AttrStyle::C23`](crate::AttrStyle). The trailing semicolon is added by the
-/// enclosing statement, matching how variable declarations behave.
+/// `static_assert` when the formatter has
+/// [`c23_keywords`](crate::RenderOptions::c23_keywords) enabled. The trailing
+/// semicolon is added by the enclosing statement, matching how variable
+/// declarations behave.
 #[derive(Debug, Clone, DisplayFromFormat)]
 pub struct StaticAssert {
     /// The constant expression that must be non-zero.
@@ -61,14 +62,14 @@ impl StaticAssert {
 
 impl Format for StaticAssert {
     fn format(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
-        let keyword = match fmt.attr_style() {
-            AttrStyle::C23 => "static_assert",
-            AttrStyle::Gnu => "_Static_assert",
+        let keyword = if fmt.c23_keywords() {
+            "static_assert"
+        } else {
+            "_Static_assert"
         };
-        let escaped = self.message.replace('\\', "\\\\").replace('"', "\\\"");
         write!(fmt, "{keyword}(")?;
         self.cond.format(fmt)?;
-        write!(fmt, ", \"{escaped}\")")
+        write!(fmt, ", \"{}\")", crate::escape::escape_c_str(&self.message))
     }
 }
 
@@ -98,7 +99,7 @@ mod tests {
         let c23 = render(
             &sa,
             RenderOptions {
-                attr_style: AttrStyle::C23,
+                c23_keywords: true,
                 ..Default::default()
             },
         );

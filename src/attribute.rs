@@ -37,10 +37,14 @@
 //! structs place theirs right after the `struct`/`union` keyword, and fields
 //! place theirs *after* the declarator (and any bitfield width).
 
-use crate::AttrStyle;
+use std::fmt::{self, Write};
+
+use crate::escape::escape_c_str;
+use crate::{AttrStyle, Format, Formatter};
+use tamacro::DisplayFromFormat;
 
 /// A single C attribute, such as `packed`, `aligned(8)`, or `format(printf, 1, 2)`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, DisplayFromFormat)]
 pub struct Attribute {
     /// An optional namespace, shown only in C23 form (e.g. `gnu` renders as
     /// `[[gnu::name]]`). GNU form never prints a namespace
@@ -170,14 +174,25 @@ impl Attribute {
     }
 }
 
-/// Wraps a value in double quotes, escaping backslashes and quotes, for use as a
-/// string-literal attribute argument.
+impl Format for Attribute {
+    /// Formats this single attribute as a complete, wrapped group in the
+    /// [`Formatter`]'s ambient style — `__attribute__((name(args)))` in GNU form
+    /// or `[[ns::name(args)]]` in C23 form. To emit several attributes as one
+    /// group, use [`write_attrs`].
+    fn format(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
+        let s = format_attrs(std::slice::from_ref(self), fmt.attr_style());
+        write!(fmt, "{s}")
+    }
+}
+
+/// Wraps a value in double quotes, escaping it for use as a string-literal
+/// attribute argument.
 fn quote(s: &str) -> String {
-    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    format!("\"{}\"", escape_c_str(s))
 }
 
 /// Renders a list of attributes in the given style, or the empty string if the
-/// list is empt.
+/// list is empty.
 ///
 /// - GNU: `__attribute__((packed, aligned(8)))`
 /// - C23: `[[gnu::packed, gnu::aligned(8)]]`
@@ -239,6 +254,48 @@ pub fn format_annotations(raw: &[String], typed: &[Attribute], style: AttrStyle)
     }
 }
 
+/// Returns whether an annotation slot would render to anything — i.e. there is at
+/// least one raw specifier token or one typed attribute. Handy for deciding
+/// separating whitespace around [`write_annotations`].
+pub fn has_annotations(raw: &[String], typed: &[Attribute]) -> bool {
+    !raw.is_empty() || !typed.is_empty()
+}
+
+/// Writes a group of attributes into `fmt` as a single `__attribute__((...))` /
+/// `[[...]]` group, in the formatter's ambient [`AttrStyle`], or nothing if the
+/// list is empty.
+///
+/// This is the [`Formatter`]-based counterpart to [`format_attrs`]; prefer it
+/// wherever a live formatter is available so the style is taken from the
+/// formatter instead of being threaded by hand.
+pub fn write_attrs(fmt: &mut Formatter<'_>, attrs: &[Attribute]) -> fmt::Result {
+    let s = format_attrs(attrs, fmt.attr_style());
+    if !s.is_empty() {
+        write!(fmt, "{s}")?;
+    }
+    Ok(())
+}
+
+/// Writes the combined annotation slot (raw specifier tokens followed by the
+/// grouped typed attributes) into `fmt` in the ambient [`AttrStyle`], or nothing
+/// if both are empty.
+///
+/// This is the [`Formatter`]-based counterpart to [`format_annotations`]. It does
+/// not emit any surrounding whitespace — callers place the leading or trailing
+/// space appropriate to the item's annotation slot (guarded by
+/// [`has_annotations`]).
+pub fn write_annotations(
+    fmt: &mut Formatter<'_>,
+    raw: &[String],
+    typed: &[Attribute],
+) -> fmt::Result {
+    let s = format_annotations(raw, typed, fmt.attr_style());
+    if !s.is_empty() {
+        write!(fmt, "{s}")?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,5 +336,59 @@ mod tests {
             "[[nodiscard]]"
         );
         assert_eq!(format_attrs(&[], AttrStyle::Gnu), "");
+    }
+
+    #[test]
+    fn format_impl_uses_ambient_style() {
+        use crate::{RenderOptions, render};
+        let a = Attribute::packed();
+        assert_eq!(a.to_string(), "__attribute__((packed))");
+        let c23 = render(
+            &a,
+            RenderOptions {
+                attr_style: AttrStyle::C23,
+                ..Default::default()
+            },
+        );
+        assert_eq!(c23, "[[gnu::packed]]");
+    }
+
+    #[test]
+    fn formatter_writers_match_string_form() {
+        use crate::{Formatter, RenderOptions};
+        let raw = vec!["MYLANG_EXPORT".to_string()];
+        let typed = vec![Attribute::noreturn()];
+
+        assert!(has_annotations(&raw, &typed));
+        assert!(!has_annotations(&[], &[]));
+
+        let mut buf = String::new();
+        {
+            let mut fmt = Formatter::new(&mut buf);
+            write_annotations(&mut fmt, &raw, &typed).unwrap();
+        }
+        assert_eq!(buf, format_annotations(&raw, &typed, AttrStyle::Gnu));
+        assert_eq!(buf, "MYLANG_EXPORT __attribute__((noreturn))");
+
+        let mut buf = String::new();
+        {
+            let mut fmt = Formatter::with_options(
+                &mut buf,
+                RenderOptions {
+                    attr_style: AttrStyle::C23,
+                    ..Default::default()
+                },
+            );
+            write_attrs(&mut fmt, &typed).unwrap();
+        }
+        assert_eq!(buf, "[[gnu::noreturn]]");
+
+        // empty slots write nothing
+        let mut buf = String::new();
+        {
+            let mut fmt = Formatter::new(&mut buf);
+            write_annotations(&mut fmt, &[], &[]).unwrap();
+        }
+        assert_eq!(buf, "");
     }
 }

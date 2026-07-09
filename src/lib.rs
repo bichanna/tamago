@@ -99,18 +99,20 @@ mod types;
 mod union;
 mod variable;
 
-pub use attribute::{format_annotations, format_attrs, Attribute};
+pub use attribute::{
+    Attribute, format_annotations, format_attrs, has_annotations, write_annotations, write_attrs,
+};
 pub use block::{Block, BlockBuilder, Statement};
 pub use comment::{Comment, CommentBuilder, DocComment, DocCommentBuilder};
 pub use conditional::{If, IfBuilder, Switch, SwitchBuilder};
 pub use enums::{Enum, EnumBuilder, Variant, VariantBuilder};
 pub use expr::{AssignOp, BinOp, EncodingPrefix, Expr, IntBase, IntSuffix, UnaryOp};
 pub use formatter::{
-    render, render_to, render_to_io, AttrStyle, BraceStyle, Format, Formatter, IndentStyle,
-    RenderOptions, SourceLoc,
+    AttrStyle, BraceStyle, Format, Formatter, IndentStyle, RenderOptions, SourceLoc, render,
+    render_to, render_to_io,
 };
 pub use function::{Function, FunctionBuilder, Parameter, ParameterBuilder};
-pub use ident::{is_c_keyword, sanitize_ident, sanitize_ident_strict, Gensym, C_KEYWORDS};
+pub use ident::{C_KEYWORDS, Gensym, is_c_keyword, sanitize_ident, sanitize_ident_strict};
 pub use loops::{DoWhile, DoWhileBuilder, For, ForBuilder, ForInit, While, WhileBuilder};
 pub use module::{HeaderGuard, Module, ModuleBuilder};
 pub use preprocessor::{
@@ -124,6 +126,6 @@ pub use static_assert::StaticAssert;
 pub use storage::StorageClass;
 pub use structs::{AggregateKind, AnonAggregate, Field, FieldBuilder, Struct, StructBuilder};
 pub use typedef::{TypeDef, TypeDefBuilder};
-pub use types::{declare, declare_with, BaseType, Type, TypeBuilder, TypeQualifier};
+pub use types::{BaseType, Type, TypeBuilder, TypeQualifier, declare, declare_with};
 pub use union::{Union, UnionBuilder};
 pub use variable::{Variable, VariableBuilder};

@@ -33,7 +33,8 @@
 use std::fmt::{self, Write};
 
 use crate::{
-    declare_with, format_annotations, Attribute, BaseType, DocComment, Format, Formatter, Type,
+    Attribute, BaseType, DocComment, Format, Formatter, Type, declare_with, has_annotations,
+    write_annotations,
 };
 use tamacro::DisplayFromFormat;
 
@@ -185,9 +186,9 @@ impl Format for Struct {
 
         write!(fmt, "struct")?;
 
-        let attrs = format_annotations(&self.raw_attrs, &self.attrs, fmt.attr_style());
-        if !attrs.is_empty() {
-            write!(fmt, " {attrs}")?;
+        if has_annotations(&self.raw_attrs, &self.attrs) {
+            write!(fmt, " ")?;
+            write_annotations(fmt, &self.raw_attrs, &self.attrs)?;
         }
 
         write!(fmt, " {}", self.name)?;
@@ -544,9 +545,9 @@ impl Format for Field {
             }
         }
 
-        let attrs = format_annotations(&self.raw_attrs, &self.attrs, fmt.attr_style());
-        if !attrs.is_empty() {
-            write!(fmt, " {attrs}")?;
+        if has_annotations(&self.raw_attrs, &self.attrs) {
+            write!(fmt, " ")?;
+            write_annotations(fmt, &self.raw_attrs, &self.attrs)?;
         }
 
         writeln!(fmt, ";")

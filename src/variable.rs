@@ -28,8 +28,8 @@
 use std::fmt::{self, Write};
 
 use crate::{
-    declare_with, format_annotations, Attribute, DocComment, Expr, Format, Formatter, StorageClass,
-    Type,
+    Attribute, DocComment, Expr, Format, Formatter, StorageClass, Type, declare_with,
+    has_annotations, write_annotations,
 };
 use tamacro::DisplayFromFormat;
 
@@ -130,9 +130,9 @@ impl Format for Variable {
             doc.format(fmt)?;
         }
 
-        let attrs = format_annotations(&self.raw_attrs, &self.attrs, fmt.attr_style());
-        if !attrs.is_empty() {
-            write!(fmt, "{attrs} ")?;
+        if has_annotations(&self.raw_attrs, &self.attrs) {
+            write_annotations(fmt, &self.raw_attrs, &self.attrs)?;
+            write!(fmt, " ")?;
         }
 
         if let Some(kw) = self.storage.keyword() {
