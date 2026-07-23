@@ -141,12 +141,11 @@ impl Format for Variable {
 
         write!(fmt, "{}", declare_with(&self.t, &self.name, fmt.options()))?;
 
-        if !self.storage.is_extern() {
-            if let Some(value) = &self.value {
+        if !self.storage.is_extern()
+            && let Some(value) = &self.value {
                 write!(fmt, " = ")?;
                 value.format(fmt)?;
             }
-        }
 
         Ok(())
     }

@@ -158,12 +158,11 @@ impl Attribute {
     /// `__attribute__(())` or `[[]]`), applying the namespace only in C23 form.
     fn entry(&self, style: AttrStyle) -> String {
         let mut out = String::new();
-        if style == AttrStyle::C23 {
-            if let Some(ns) = &self.namespace {
+        if style == AttrStyle::C23
+            && let Some(ns) = &self.namespace {
                 out.push_str(ns);
                 out.push_str("::");
             }
-        }
         out.push_str(&self.name);
         if !self.args.is_empty() {
             out.push('(');
