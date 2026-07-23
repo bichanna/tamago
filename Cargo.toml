@@ -3,14 +3,15 @@ name = "tamago"
 version = "0.2.0"
 edition = "2024"
 
-description = "Library for generating C code"
+description = "A code generator library for C, with a builder-pattern API"
 license = "MIT"
-license-file = "LICENSE.txt"
 authors = ["Nobuharu Shimazu <nobu.bichanna@gmail.com>"]
 homepage = "https://github.com/bichanna/tamago"
 repository = "https://github.com/bichanna/tamago"
+documentation = "https://docs.rs/tamago"
 readme = "README.md"
-keywords = ["code", "generator", "code_generator"]
+keywords = ["c", "codegen", "code-generation", "compiler", "builder"]
+categories = ["development-tools", "compilers"]
 
 [dependencies]
 tamacro = { path = "./tamacro", version = "0.1.0" }
